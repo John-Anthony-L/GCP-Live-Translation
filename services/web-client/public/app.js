@@ -216,11 +216,11 @@ async function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   
   if (currentMode === 'gemini-live') {
-    // If port is 3000 in local dev, proxy is on 8080. On Cloud Run, URL is configured.
-    const port = window.location.port === '3000' ? '8080' : window.location.port;
+    // If port is 3000 in local dev, proxy is on 8090. On Cloud Run, URL is same host.
+    const port = window.location.port === '3000' ? '8090' : window.location.port;
     wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/live-translate?sourceLang=${srcLang}&targetLang=${tgtLang}&voice=${voice}`;
   } else {
-    const port = window.location.port === '3000' ? '8081' : window.location.port;
+    const port = window.location.port === '3000' ? '8092' : window.location.port;
     wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/ws/stream-translate`;
   }
 

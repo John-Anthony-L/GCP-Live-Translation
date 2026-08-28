@@ -27,7 +27,7 @@ public class TranslationSession: ObservableObject {
     @Published public var speakerTranscript: String = ""
     @Published public var translatedTranscript: String = ""
     @Published public var currentLatencyMs: Int = 0
-    @Published public var serverBaseUrl: String = "ws://localhost:8080"
+    @Published public var serverBaseUrl: String = "ws://localhost:8090"
     
     public let availableLanguages: [LanguageOption] = [
         LanguageOption(code: "en", name: "English (US)"),
