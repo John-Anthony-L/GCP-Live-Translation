@@ -1,0 +1,48 @@
+# Node & Dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# OS & IDE
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+service-account.json
+*.key
+*.pem
+
+# Xcode & iOS
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.xcuserstate

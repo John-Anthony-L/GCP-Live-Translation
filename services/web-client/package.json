@@ -1,0 +1,12 @@
+{
+  "name": "disney-live-translation-web-testbed",
+  "version": "1.0.0",
+  "description": "Interactive Web & Mobile Testbed for Disney Live Translation POC",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
