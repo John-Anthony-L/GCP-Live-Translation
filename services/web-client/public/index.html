@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Disney Parks Live Translation POC</title>
+  <title>Disney Parks 2-Way Live Translation | Argolis GCP</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,8 +16,8 @@
       <div class="brand">
         <span class="brand-sparkle">✨</span>
         <div class="brand-titles">
-          <h1>Disney Parks Live Translation</h1>
-          <span class="badge">Argolis GCP POC • disney-parks-live-translation</span>
+          <h1>Disney Parks 2-Way Live Translation</h1>
+          <span class="badge">Argolis GCP • disney-parks-live-translation</span>
         </div>
       </div>
       <div class="header-status">
@@ -33,39 +33,39 @@
       <button class="tab-btn active" data-mode="gemini-live">
         <span class="tab-icon">⚡</span>
         <span class="tab-title">Gemini 2.0 Live API</span>
-        <span class="tab-subtitle">Native Speech-to-Speech</span>
+        <span class="tab-subtitle">Native Speech-to-Speech (Vertex AI)</span>
       </button>
       <button class="tab-btn" data-mode="translation-pipeline">
         <span class="tab-icon">⚙️</span>
         <span class="tab-title">Translation Advanced v3</span>
-        <span class="tab-subtitle">STT + Glossary MT + TTS</span>
+        <span class="tab-subtitle">STT ➔ Cloud Glossary ➔ TTS</span>
       </button>
       <button class="tab-btn" data-mode="glossary">
         <span class="tab-icon">📖</span>
         <span class="tab-title">Disney Glossary</span>
-        <span class="tab-subtitle">Park Terms & Rules</span>
+        <span class="tab-subtitle">24 Protected Park Terms</span>
       </button>
     </nav>
 
     <!-- Main Content Area -->
     <main class="main-content">
-      <!-- Section 1 & 2: Live Translation UI -->
+      <!-- Section 1 & 2: Live Translation View -->
       <section id="translationSection" class="view-section active">
         <!-- Controls Bar -->
         <div class="controls-card">
           <div class="control-group">
-            <label for="langPair">Language Pair</label>
+            <label for="langPair">Target Language Pair</label>
             <select id="langPair" class="custom-select">
-              <option value="en-es" selected>English ⇄ Spanish (Español)</option>
-              <option value="en-pt">English ⇄ Portuguese (Português)</option>
-              <option value="en-fr">English ⇄ French (Français)</option>
-              <option value="en-ja">English ⇄ Japanese (日本語)</option>
-              <option value="en-zh">English ⇄ Mandarin (中文)</option>
+              <option value="en-es" selected>🇺🇸 English ⇄ 🇪🇸 Spanish (Español)</option>
+              <option value="en-pt">🇺🇸 English ⇄ 🇧🇷 Portuguese (Português)</option>
+              <option value="en-fr">🇺🇸 English ⇄ 🇫🇷 French (Français)</option>
+              <option value="en-ja">🇺🇸 English ⇄ 🇯🇵 Japanese (日本語)</option>
+              <option value="en-zh">🇺🇸 English ⇄ 🇨🇳 Mandarin (中文)</option>
             </select>
           </div>
 
           <div class="control-group">
-            <label for="personaVoice">Voice / Persona</label>
+            <label for="personaVoice">Voice Personality</label>
             <select id="personaVoice" class="custom-select">
               <option value="Aoede" selected>Aoede (Warm & Welcoming)</option>
               <option value="Puck">Puck (Energetic & Cheerful)</option>
@@ -77,11 +77,11 @@
 
           <div class="control-group toggle-group">
             <label class="toggle-label">
-              <span>Streaming Mode</span>
+              <span>Continuous 2-Way Stream</span>
               <input type="checkbox" id="continuousStreamToggle">
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-hint" id="streamModeHint">Push-to-Talk (Hold)</span>
+            <span class="toggle-hint" id="streamModeHint">Dual Push-to-Talk (Active)</span>
           </div>
         </div>
 
@@ -93,74 +93,112 @@
               <span id="latencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub" id="latencySub">End-to-End Speech Latency</span>
+            <span class="metric-sub" id="latencySub">Speech-to-Speech Latency</span>
           </div>
 
           <div class="metric-card">
-            <span class="metric-title">Glossary Adherence</span>
+            <span class="metric-title">Disney Brand Rules</span>
             <div class="metric-value-row">
-              <span id="glossaryStatus" class="metric-val status-pill active">Injected</span>
+              <span id="glossaryStatus" class="metric-val status-pill active">Enforced</span>
             </div>
-            <span class="metric-sub">24 Disney Terms Active</span>
+            <span class="metric-sub">Attractions & Terms Protected</span>
           </div>
 
           <div class="metric-card">
-            <span class="metric-title">Audio Pipeline</span>
+            <span class="metric-title">Translation Mode</span>
             <div class="metric-value-row">
-              <span id="audioFormat" class="metric-val">16kHz ➔ 24kHz</span>
+              <span id="engineBadge" class="metric-val engine-pill">Gemini 2.0 S2S</span>
             </div>
-            <span class="metric-sub">Linear PCM Low-Latency</span>
+            <span class="metric-sub" id="audioFormat">16kHz PCM In ➔ 24kHz Out</span>
           </div>
         </div>
 
-        <!-- Live Subtitles & Transcript Cards -->
-        <div class="transcript-container">
-          <div class="transcript-box speaker-box">
-            <div class="box-header">
-              <span class="speaker-tag cast-member">Cast Member / Speaker</span>
-              <span class="audio-state-dot" id="speakerAudioDot"></span>
-            </div>
-            <div class="box-content" id="speakerTranscript">
-              <span class="placeholder-text">Press and hold the microphone button below to speak... (e.g., "Where is the Lightning Lane entrance for Space Mountain?")</span>
-            </div>
+        <!-- 2-Way Dialogue Transcript Container -->
+        <div class="dialogue-container">
+          <div class="dialogue-header">
+            <span>2-WAY INTERPRETER TRANSCRIPT</span>
+            <button id="clearChatBtn" class="clear-btn">Clear</button>
           </div>
-
-          <div class="transcript-box translated-box">
-            <div class="box-header">
-              <span class="speaker-tag translation">Live Translation (Interpreter)</span>
-              <span class="audio-state-dot active" id="translatorAudioDot" style="display:none;"></span>
-            </div>
-            <div class="box-content" id="translatedTranscript">
-              <span class="placeholder-text">Live translation will stream here in real time...</span>
+          
+          <div class="chat-feed" id="chatFeed">
+            <div class="chat-welcome">
+              <span class="sparkle-icon">✨</span>
+              <p>Welcome to the <strong>Disney Parks Live Translation</strong> testbed.</p>
+              <p class="sub-hint">Use the dual buttons below: hold <strong>Cast Member</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Spoken audio will play back automatically!</p>
             </div>
           </div>
         </div>
 
-        <!-- Waveform Visualizer & Action Bar -->
-        <div class="action-bar">
-          <div class="waveform-container">
-            <canvas id="waveformCanvas" width="300" height="40"></canvas>
+        <!-- Quick Disney Test Scenarios -->
+        <div class="quick-scenarios-card">
+          <span class="scenarios-title">🎯 Quick Disney Test Scenarios (Click to Run):</span>
+          <div class="scenarios-buttons">
+            <button class="scenario-chip" data-lang="en" data-text="Where is the Lightning Lane entrance for Space Mountain in Tomorrowland?">
+              🇺🇸 Space Mountain & Lightning Lane
+            </button>
+            <button class="scenario-chip" data-lang="es" data-text="¿A qué hora es el Rope Drop para Star Wars: Rise of the Resistance?">
+              🇪🇸 Rope Drop & Rise of the Resistance
+            </button>
+            <button class="scenario-chip" data-lang="en" data-text="Can you show me where to find a Cast Member for Disney PhotoPass?">
+              🇺🇸 Cast Member & PhotoPass
+            </button>
+            <button class="scenario-chip" data-lang="es" data-text="¿Puedo usar mi MagicBand+ para entrar a la Fila Virtual de Haunted Mansion?">
+              🇪🇸 MagicBand+ & Fila Virtual
+            </button>
+          </div>
+        </div>
+
+        <!-- Dual Push-to-Talk 2-Way Audio Action Bar -->
+        <div class="action-bar-2way">
+          <!-- Cast Member (English) Speak Button -->
+          <div class="speaker-col">
+            <span class="speaker-label cast-member-label">Cast Member (English)</span>
+            <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to Speak English">
+              <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+              </svg>
+            </button>
+            <span class="btn-subtext">Hold to speak 🇺🇸</span>
           </div>
 
-          <button id="micButton" class="mic-button" title="Push to Talk">
-            <div class="mic-ripple"></div>
-            <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-            </svg>
-          </button>
-
-          <div class="action-hints">
-            <span id="micInstruction">Hold to Speak or Click to Start Session</span>
+          <!-- Central Waveform Visualizer -->
+          <div class="center-col">
+            <div class="audio-pulse-indicator" id="audioPulse">
+              <span class="pulse-bar"></span>
+              <span class="pulse-bar"></span>
+              <span class="pulse-bar"></span>
+              <span class="pulse-bar"></span>
+              <span class="pulse-bar"></span>
+            </div>
+            <span class="live-status-text" id="liveStatusText">Ready</span>
           </div>
+
+          <!-- International Guest Speak Button -->
+          <div class="speaker-col">
+            <span class="speaker-label guest-label" id="guestSpeakerLabel">Guest (Spanish)</span>
+            <button id="guestMicBtn" class="mic-button guest-btn" title="Hold to Speak Target Language">
+              <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+              </svg>
+            </button>
+            <span class="btn-subtext" id="guestBtnSubtext">Hold to speak 🇪🇸</span>
+          </div>
+        </div>
+
+        <!-- Optional Text Input fallback for testing without mic -->
+        <div class="text-fallback-bar">
+          <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'Where is Lightning Lane?')">
+          <button id="sendTextBtn" class="send-btn">Send & Speak</button>
         </div>
       </section>
 
-      <!-- Section 3: Disney Glossary Inspector -->
+      <!-- Section 3: Disney Glossary Reference -->
       <section id="glossarySection" class="view-section">
         <div class="glossary-header-card">
-          <h2>🏰 Disney Parks Vocabulary & Brand Rules</h2>
-          <p>These terms, attraction names, and guest service phrases are dynamically injected into the Gemini Live session and Cloud Translation API Advanced to preserve Disney brand equity.</p>
+          <h2>🏰 Disney Parks Glossary & Brand Injection</h2>
+          <p>These terms and attractions are enforced in the live translation prompt and Google Cloud Translation API to preserve Disney brand equity.</p>
           <div class="glossary-search-bar">
             <input type="text" id="glossarySearch" placeholder="Search Disney attractions, services, characters...">
           </div>
@@ -174,7 +212,7 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <span>Google Cloud Vertex AI • Gemini 2.0 Live Architecture POC</span>
+      <span>Disney Parks Live Translation POC • Google Cloud Argolis • Project: <code>disney-parks-live-translation</code></span>
     </footer>
   </div>
 

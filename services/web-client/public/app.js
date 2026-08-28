@@ -1,13 +1,14 @@
-// Disney Live Translation Client Application
+// Disney Parks 2-Way Live Translation Client
 let currentMode = 'gemini-live'; // 'gemini-live' | 'translation-pipeline'
+let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest'
 let isRecording = false;
 let isContinuous = false;
 let socket = null;
 let audioContext = null;
 let micStream = null;
 let scriptProcessor = null;
-let audioQueue = [];
-let isPlayingAudio = false;
+let playbackContext = null;
+let currentMessageBubble = null;
 let lastSpeechStartTimestamp = 0;
 let glossaryData = [];
 
@@ -15,17 +16,23 @@ let glossaryData = [];
 const connectionStatus = document.getElementById('connectionStatus');
 const statusLabel = connectionStatus.querySelector('.status-label');
 const tabButtons = document.querySelectorAll('.tab-btn');
-const viewSections = document.querySelectorAll('.view-section');
 const langPairSelect = document.getElementById('langPair');
 const personaVoiceSelect = document.getElementById('personaVoice');
 const continuousStreamToggle = document.getElementById('continuousStreamToggle');
 const streamModeHint = document.getElementById('streamModeHint');
-const micButton = document.getElementById('micButton');
-const micInstruction = document.getElementById('micInstruction');
-const speakerTranscript = document.getElementById('speakerTranscript');
-const translatedTranscript = document.getElementById('translatedTranscript');
+const castMemberMicBtn = document.getElementById('castMemberMicBtn');
+const guestMicBtn = document.getElementById('guestMicBtn');
+const guestSpeakerLabel = document.getElementById('guestSpeakerLabel');
+const guestBtnSubtext = document.getElementById('guestBtnSubtext');
+const liveStatusText = document.getElementById('liveStatusText');
+const audioPulse = document.getElementById('audioPulse');
+const chatFeed = document.getElementById('chatFeed');
+const clearChatBtn = document.getElementById('clearChatBtn');
 const latencyValue = document.getElementById('latencyValue');
 const latencySub = document.getElementById('latencySub');
+const engineBadge = document.getElementById('engineBadge');
+const textInput = document.getElementById('textInput');
+const sendTextBtn = document.getElementById('sendTextBtn');
 const glossaryGrid = document.getElementById('glossaryGrid');
 const glossarySearch = document.getElementById('glossarySearch');
 
@@ -34,6 +41,7 @@ async function init() {
   setupTabs();
   setupControls();
   setupGlossary();
+  setupQuickScenarios();
   await connectWebSocket();
 }
 
@@ -54,11 +62,13 @@ function setupTabs() {
         document.getElementById('translationSection').classList.add('active');
         
         if (mode === 'gemini-live') {
-          latencySub.innerText = 'End-to-End Speech Latency';
-          document.getElementById('audioFormat').innerText = '16kHz ➔ 24kHz';
+          engineBadge.innerText = 'Gemini 2.0 S2S';
+          latencySub.innerText = 'Speech-to-Speech Latency';
+          document.getElementById('audioFormat').innerText = '16kHz In ➔ 24kHz Out';
         } else {
-          latencySub.innerText = 'STT + MT + TTS Pipeline Latency';
-          document.getElementById('audioFormat').innerText = 'STT ➔ TTS Neural2';
+          engineBadge.innerText = 'STT + MT + TTS';
+          latencySub.innerText = 'Pipeline Multi-Hop Latency';
+          document.getElementById('audioFormat').innerText = 'STT v2 ➔ Neural2 TTS';
         }
         reconnectWebSocket();
       }
@@ -66,15 +76,15 @@ function setupTabs() {
   });
 }
 
-// Controls
+// Controls Setup
 function setupControls() {
   continuousStreamToggle.addEventListener('change', (e) => {
     isContinuous = e.target.checked;
-    streamModeHint.innerText = isContinuous ? 'Continuous Streaming (Active)' : 'Push-to-Talk (Hold)';
-    micInstruction.innerText = isContinuous ? 'Click to Start / Stop Streaming' : 'Hold to Speak or Click to Start';
+    streamModeHint.innerText = isContinuous ? 'Continuous 2-Way (Active)' : 'Dual Push-to-Talk (Active)';
   });
 
   langPairSelect.addEventListener('change', () => {
+    updateLanguageLabels();
     reconnectWebSocket();
   });
 
@@ -82,31 +92,116 @@ function setupControls() {
     reconnectWebSocket();
   });
 
-  // Push to talk / Click events
-  micButton.addEventListener('mousedown', startSpeaking);
-  micButton.addEventListener('mouseup', stopSpeaking);
-  micButton.addEventListener('touchstart', (e) => { e.preventDefault(); startSpeaking(); });
-  micButton.addEventListener('touchend', (e) => { e.preventDefault(); stopSpeaking(); });
+  clearChatBtn.addEventListener('click', () => {
+    chatFeed.innerHTML = `
+      <div class="chat-welcome">
+        <span class="sparkle-icon">✨</span>
+        <p>Chat cleared. Ready for live Disney translation.</p>
+      </div>
+    `;
+  });
 
-  micButton.addEventListener('click', () => {
+  // Cast Member Push to Talk
+  setupMicButton(castMemberMicBtn, 'cast-member');
+
+  // Guest Push to Talk
+  setupMicButton(guestMicBtn, 'guest');
+
+  // Text fallback send
+  sendTextBtn.addEventListener('click', handleSendText);
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleSendText();
+  });
+}
+
+function updateLanguageLabels() {
+  const [src, tgt] = langPairSelect.value.split('-');
+  const langNames = {
+    es: { name: 'Spanish', flag: '🇪🇸' },
+    pt: { name: 'Portuguese', flag: '🇧🇷' },
+    fr: { name: 'French', flag: '🇫🇷' },
+    ja: { name: 'Japanese', flag: '🇯🇵' },
+    zh: { name: 'Mandarin', flag: '🇨🇳' }
+  };
+  const targetInfo = langNames[tgt] || { name: tgt.toUpperCase(), flag: '🌐' };
+  guestSpeakerLabel.innerText = `Guest (${targetInfo.name})`;
+  guestBtnSubtext.innerText = `Hold to speak ${targetInfo.flag}`;
+}
+
+function setupMicButton(button, role) {
+  const startHandler = (e) => {
+    if (e) e.preventDefault();
     if (isContinuous) {
       if (isRecording) {
         stopRecording();
       } else {
+        currentSpeakerRole = role;
         startRecording();
       }
+    } else {
+      currentSpeakerRole = role;
+      startRecording();
     }
+  };
+
+  const stopHandler = (e) => {
+    if (e) e.preventDefault();
+    if (!isContinuous) {
+      stopRecording();
+    }
+  };
+
+  button.addEventListener('mousedown', startHandler);
+  button.addEventListener('mouseup', stopHandler);
+  button.addEventListener('touchstart', startHandler);
+  button.addEventListener('touchend', stopHandler);
+}
+
+// Quick Scenario Buttons
+function setupQuickScenarios() {
+  document.querySelectorAll('.scenario-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const lang = chip.getAttribute('data-lang');
+      const text = chip.getAttribute('data-text');
+      const role = lang === 'en' ? 'cast-member' : 'guest';
+      
+      currentSpeakerRole = role;
+      addMessageBubble(role, text);
+
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        lastSpeechStartTimestamp = Date.now();
+        setLiveStatus('Translating scenario...', true);
+        
+        if (currentMode === 'gemini-live') {
+          socket.send(JSON.stringify({ type: 'text', text }));
+        } else {
+          // Translation pipeline via WebSocket
+          const [src, tgt] = langPairSelect.value.split('-');
+          socket.send(JSON.stringify({
+            type: 'text',
+            text,
+            sourceLang: lang === 'en' ? src : tgt,
+            targetLang: lang === 'en' ? tgt : src
+          }));
+        }
+      }
+    });
   });
 }
 
-function startSpeaking() {
-  if (isContinuous) return;
-  startRecording();
-}
+function handleSendText() {
+  const text = textInput.value.trim();
+  if (!text) return;
+  textInput.value = '';
 
-function stopSpeaking() {
-  if (isContinuous) return;
-  stopRecording();
+  currentSpeakerRole = 'cast-member';
+  addMessageBubble('cast-member', text);
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    lastSpeechStartTimestamp = Date.now();
+    setLiveStatus('Translating...', true);
+    socket.send(JSON.stringify({ type: 'text', text }));
+  }
 }
 
 // WebSocket Connection
@@ -116,17 +211,15 @@ async function connectWebSocket() {
   const [srcLang, tgtLang] = langPairSelect.value.split('-');
   const voice = personaVoiceSelect.value;
   
-  // Default ports based on local or container environment
   let wsUrl = '';
+  const host = window.location.hostname;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  
   if (currentMode === 'gemini-live') {
-    const host = window.location.hostname;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // If running on port 3000, proxy is on 8080. In production on Cloud Run, use the configured proxy URL.
+    // If port is 3000 in local dev, proxy is on 8080. On Cloud Run, URL is configured.
     const port = window.location.port === '3000' ? '8080' : window.location.port;
     wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/live-translate?sourceLang=${srcLang}&targetLang=${tgtLang}&voice=${voice}`;
   } else {
-    const host = window.location.hostname;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const port = window.location.port === '3000' ? '8081' : window.location.port;
     wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/ws/stream-translate`;
   }
@@ -137,31 +230,36 @@ async function connectWebSocket() {
     socket.onopen = () => {
       console.log(`[WS] Connected to ${currentMode}`);
       updateStatus('connected', 'Live & Ready');
+      setLiveStatus('Ready');
     };
 
-    socket.onmessage = async (event) => {
+    socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
       if (data.type === 'ready') {
         console.log('[WS] Session ready:', data);
+        setLiveStatus('Interpreter Ready');
       } else if (data.type === 'audio' && data.pcm) {
         if (data.latencyMs && data.latencyMs > 0) {
           latencyValue.innerText = data.latencyMs;
+        } else if (lastSpeechStartTimestamp > 0) {
+          latencyValue.innerText = Date.now() - lastSpeechStartTimestamp;
         }
+        setLiveStatus('Playing Translation...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
       } else if (data.type === 'transcript' && data.text) {
-        appendTranslation(data.text);
+        updateMessageTranslation(data.text);
       } else if (data.type === 'turn_complete') {
-        console.log('[WS] Turn complete');
+        setLiveStatus('Ready', false);
       } else if (data.type === 'interrupted') {
-        console.log('[WS] Barge-in interrupted');
-        clearAudioQueue();
+        console.log('[WS] Interrupted');
+        setLiveStatus('Interrupted', false);
       } else if (data.success && data.translated_text) {
-        // Translation Pipeline response format
+        // Translation Pipeline Response
         latencyValue.innerText = data.total_latency_ms;
-        speakerTranscript.innerText = data.source_transcript;
-        translatedTranscript.innerText = data.translated_text;
+        updateMessageTranslation(data.translated_text);
         if (data.audio_base64) {
+          setLiveStatus('Playing Speech...', true);
           playPcmChunk(data.audio_base64, 24000);
         }
       }
@@ -170,11 +268,13 @@ async function connectWebSocket() {
     socket.onerror = (err) => {
       console.error('[WS] Error:', err);
       updateStatus('disconnected', 'Connection Error');
+      setLiveStatus('Offline');
     };
 
     socket.onclose = () => {
       console.log('[WS] Closed');
       updateStatus('disconnected', 'Disconnected');
+      setLiveStatus('Disconnected');
     };
   } catch (e) {
     console.error('Failed to connect WebSocket:', e);
@@ -192,6 +292,15 @@ function reconnectWebSocket() {
 function updateStatus(state, label) {
   connectionStatus.className = `status-indicator ${state}`;
   statusLabel.innerText = label;
+}
+
+function setLiveStatus(text, isPulse = false) {
+  liveStatusText.innerText = text;
+  if (isPulse) {
+    audioPulse.classList.add('active');
+  } else {
+    audioPulse.classList.remove('active');
+  }
 }
 
 // Audio Recording (Capture 16kHz PCM)
@@ -225,8 +334,9 @@ async function startRecording() {
           type: 'audio',
           pcm: base64Pcm,
           sampleRate: 16000,
-          sourceLang: srcLang,
-          targetLang: tgtLang
+          speakerRole: currentSpeakerRole,
+          sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
+          targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
         }));
       }
     };
@@ -235,20 +345,24 @@ async function startRecording() {
     scriptProcessor.connect(audioContext.destination);
 
     isRecording = true;
-    micButton.classList.add('recording');
+    const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
+    activeBtn.classList.add('recording');
+    
     lastSpeechStartTimestamp = Date.now();
-    speakerTranscript.innerText = "Listening...";
-    translatedTranscript.innerText = "...";
+    setLiveStatus(`Listening to ${currentSpeakerRole === 'cast-member' ? 'Cast Member' : 'Guest'}...`, true);
+    addMessageBubble(currentSpeakerRole, "🎤 Speaking...");
   } catch (err) {
-    console.error('Microphone access denied or error:', err);
-    alert('Please grant microphone access to test live translation.');
+    console.error('Microphone error:', err);
+    alert('Please allow microphone access to test live speech translation.');
   }
 }
 
 function stopRecording() {
   if (!isRecording) return;
   isRecording = false;
-  micButton.classList.remove('recording');
+
+  castMemberMicBtn.classList.remove('recording');
+  guestMicBtn.classList.remove('recording');
 
   if (scriptProcessor) {
     scriptProcessor.disconnect();
@@ -258,9 +372,10 @@ function stopRecording() {
     micStream.getTracks().forEach(track => track.stop());
     micStream = null;
   }
+  setLiveStatus('Processing...', true);
 }
 
-// Float32 to Int16 PCM converter
+// Convert Float32 to Int16 PCM
 function convertFloat32ToInt16(buffer) {
   let l = buffer.length;
   const buf = new Int16Array(l);
@@ -282,8 +397,6 @@ function arrayBufferToBase64(buffer) {
 }
 
 // Audio Playback (PCM 24kHz)
-let playbackContext = null;
-
 function playPcmChunk(base64Data, sampleRate = 24000) {
   if (!playbackContext) {
     playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
@@ -311,19 +424,43 @@ function playPcmChunk(base64Data, sampleRate = 24000) {
   sourceNode.start();
 }
 
-function clearAudioQueue() {
-  audioQueue = [];
+// Dialogue UI Feed
+function addMessageBubble(role, originalText) {
+  const welcome = chatFeed.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+
+  const bubble = document.createElement('div');
+  bubble.className = `message-bubble ${role}`;
+  
+  const roleLabel = role === 'cast-member' ? '🇺🇸 Cast Member' : '🌐 Guest';
+  bubble.innerHTML = `
+    <div class="message-meta">
+      <span>${roleLabel}</span>
+      <span class="bubble-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+    </div>
+    <div class="message-text">${originalText}</div>
+    <div class="message-translated">🔄 Translating...</div>
+  `;
+
+  chatFeed.appendChild(bubble);
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+  currentMessageBubble = bubble;
 }
 
-function appendTranslation(text) {
-  if (translatedTranscript.innerText === '...' || translatedTranscript.innerText.startsWith('Live translation')) {
-    translatedTranscript.innerText = text;
-  } else {
-    translatedTranscript.innerText += text;
+function updateMessageTranslation(translatedText) {
+  if (!currentMessageBubble) return;
+  const transEl = currentMessageBubble.querySelector('.message-translated');
+  if (transEl) {
+    if (transEl.innerText.startsWith('🔄 Translating')) {
+      transEl.innerText = `✨ ${translatedText}`;
+    } else {
+      transEl.innerText += translatedText;
+    }
   }
+  chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
-// Glossary Display
+// Glossary Setup
 async function setupGlossary() {
   try {
     const res = await fetch('/api/glossary');
