@@ -63,21 +63,21 @@ class DisneyTranslationPipeline:
         start_time = time.time()
         parent = f"projects/{PROJECT_ID}/locations/{LOCATION}"
         
-        request_kwargs: Dict[str, Any] = {
-            "parent": parent,
-            "contents": [text],
-            "mime_type": "text/plain",
-            "source_language_code": source_lang,
-            "target_language_code": target_lang,
-        }
+        request = translate.TranslateTextRequest(
+            parent=parent,
+            contents=[text],
+            mime_type="text/plain",
+            source_language_code=source_lang,
+            target_language_code=target_lang,
+        )
 
         if use_glossary:
             try:
-                request_kwargs["glossary_config"] = get_glossary_config(source_lang, target_lang)
+                request.glossary_config = get_glossary_config(source_lang, target_lang)
             except Exception as e:
                 print(f"[Pipeline] Glossary config error (skipping glossary): {e}")
 
-        response = self.translate_client.translate_text(**request_kwargs)
+        response = self.translate_client.translate_text(request=request)
         duration_ms = (time.time() - start_time) * 1000
 
         translated_text = ""

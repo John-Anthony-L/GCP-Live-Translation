@@ -27,6 +27,7 @@ export function loadGlossary(): GlossaryData {
 
   // Attempt to load from multiple potential locations
   const potentialPaths = [
+    path.resolve(process.cwd(), 'disney_parks_glossary.json'),
     path.resolve(process.cwd(), 'glossaries/disney_parks_glossary.json'),
     path.resolve(__dirname, '../../../glossaries/disney_parks_glossary.json'),
     path.resolve(__dirname, '../glossaries/disney_parks_glossary.json'),

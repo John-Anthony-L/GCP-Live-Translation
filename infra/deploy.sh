@@ -36,11 +36,11 @@ gcloud services enable \
 # 3. Create GCS Glossary Bucket & Upload Disney Glossary
 echo ""
 echo "📦 Step 2: Creating GCS Glossary Bucket and Uploading Glossary..."
-if ! gsutil ls -b "gs://${BUCKET_NAME}" > /dev/null 2>&1; then
-    gsutil mb -p "${PROJECT_ID}" -l "${REGION}" "gs://${BUCKET_NAME}"
+if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" > /dev/null 2>&1; then
+    gcloud storage buckets create "gs://${BUCKET_NAME}" --project="${PROJECT_ID}" --location="${REGION}"
 fi
 
-gsutil cp glossaries/disney_glossary_en_es.csv "gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
+gcloud storage cp glossaries/disney_glossary_en_es.csv "gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
 echo "✅ Glossary uploaded to gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
 
 # 4. Deploy Service 1: Gemini Live Proxy (Node.js WebSocket Gateway)
@@ -52,6 +52,7 @@ gcloud run deploy disney-gemini-live-proxy \
     --region "${REGION}" \
     --platform managed \
     --allow-unauthenticated \
+    --quiet \
     --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},GEMINI_LIVE_MODEL=gemini-2.0-flash-exp,DEFAULT_VOICE=Aoede" \
     --session-affinity \
     --timeout 3600 \
@@ -70,6 +71,7 @@ gcloud run deploy disney-translation-pipeline \
     --region "${REGION}" \
     --platform managed \
     --allow-unauthenticated \
+    --quiet \
     --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},GLOSSARY_ID=disney-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME}" \
     --timeout 3600 \
     --cpu 2 \
@@ -88,6 +90,7 @@ gcloud run deploy disney-live-web-client \
     --region "${REGION}" \
     --platform managed \
     --allow-unauthenticated \
+    --quiet \
     --set-env-vars "GEMINI_LIVE_PROXY_URL=${WS_PROXY_URL},TRANSLATION_PIPELINE_URL=${PIPELINE_URL}" \
     --cpu 1 \
     --memory 1Gi

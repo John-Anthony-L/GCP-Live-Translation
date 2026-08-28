@@ -8,8 +8,8 @@ BUCKET_NAME="${PROJECT_ID}-glossaries"
 
 echo "Configuring Cloud Translation API Advanced Glossary: ${GLOSSARY_ID}..."
 
-# Upload CSV to GCS
-gsutil cp glossaries/disney_glossary_en_es.csv "gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
+# Upload CSV to GCS using gcloud storage
+gcloud storage cp glossaries/disney_glossary_en_es.csv "gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
 
 # Call GCP Translation API v3 to register glossary
 TOKEN=$(gcloud auth print-access-token)
