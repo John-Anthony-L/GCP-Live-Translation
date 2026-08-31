@@ -22,26 +22,39 @@ class DisneyTranslationPipeline:
             "Single Rider", "Tiana's Bayou Adventure", "Rope Drop", "Park Hopper"
         ]
 
-    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US") -> Dict[str, Any]:
+    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", model: str = None) -> Dict[str, Any]:
         start_time = time.time()
+        stt_model = model or os.getenv("STT_MODEL", "gemini-3.5-transcribe")
         
         # Build speech adaptation phrase set to bias Disney terms
         speech_context = speech.SpeechContext(
             phrases=self.disney_phrases,
-            boost=15.0
+            boost=20.0
         )
 
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            sample_rate_hertz=sample_rate,
-            language_code=lang_code,
-            speech_contexts=[speech_context],
-            enable_automatic_punctuation=True,
-            model="default"
-        )
-        
-        audio = speech.RecognitionAudio(content=pcm_data)
-        response = self.speech_client.recognize(config=config, audio=audio)
+        try:
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=sample_rate,
+                language_code=lang_code,
+                speech_contexts=[speech_context],
+                enable_automatic_punctuation=True,
+                model=stt_model
+            )
+            audio = speech.RecognitionAudio(content=pcm_data)
+            response = self.speech_client.recognize(config=config, audio=audio)
+        except Exception as e:
+            print(f"[Pipeline] STT model {stt_model} exception, falling back to default: {e}")
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=sample_rate,
+                language_code=lang_code,
+                speech_contexts=[speech_context],
+                enable_automatic_punctuation=True,
+                model="default"
+            )
+            audio = speech.RecognitionAudio(content=pcm_data)
+            response = self.speech_client.recognize(config=config, audio=audio)
         
         duration_ms = (time.time() - start_time) * 1000
         
@@ -56,6 +69,7 @@ class DisneyTranslationPipeline:
         return {
             "transcript": transcript,
             "confidence": confidence,
+            "stt_model": stt_model,
             "latency_ms": round(duration_ms, 2)
         }
 
@@ -181,6 +195,11 @@ class DisneyTranslationPipeline:
                 "stt_ms": stt_result["latency_ms"],
                 "translation_ms": mt_result["latency_ms"],
                 "tts_ms": tts_result["latency_ms"]
+            },
+            "models": {
+                "stt_model": stt_result.get("stt_model", "gemini-3.5-transcribe"),
+                "translation_model": mt_result.get("model", "general/translation-llm"),
+                "tts_voice": tts_lang_code
             },
             "glossary_applied": mt_result["glossary_applied"]
         }

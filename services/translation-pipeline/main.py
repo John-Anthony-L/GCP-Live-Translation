@@ -40,6 +40,7 @@ def health():
         "service": "translation-pipeline",
         "project_id": os.getenv("PROJECT_ID", "disney-parks-live-translation"),
         "location": os.getenv("LOCATION", "us-central1"),
+        "stt_model": os.getenv("STT_MODEL", "gemini-3.5-transcribe"),
         "translation_model": os.getenv("TRANSLATION_MODEL", "general/translation-llm")
     }
 
