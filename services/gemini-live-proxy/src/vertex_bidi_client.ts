@@ -26,7 +26,8 @@ export class VertexBidiClient {
   public async connect(
     systemInstruction: string,
     voiceName: string = config.defaultVoice,
-    callbacks: VertexBidiCallbacks
+    callbacks: VertexBidiCallbacks,
+    modelName: string = config.model
   ): Promise<void> {
     const client = await this.auth.getClient();
     const tokenResponse = await client.getAccessToken();
@@ -39,7 +40,7 @@ export class VertexBidiClient {
     const host = `${config.location}-aiplatform.googleapis.com`;
     const wsUrl = `wss://${host}/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`;
 
-    console.log(`[VertexBidiClient] Connecting to ${wsUrl} (Project: ${config.projectId}, Model: ${config.model})`);
+    console.log(`[VertexBidiClient] Connecting to ${wsUrl} (Project: ${config.projectId}, Model: ${modelName})`);
 
     this.ws = new WebSocket(wsUrl, {
       headers: {
@@ -50,7 +51,9 @@ export class VertexBidiClient {
     this.ws.on('open', () => {
       console.log('[VertexBidiClient] WebSocket connected to Vertex AI. Sending BidiGenerateContentSetup...');
       
-      const modelPath = `projects/${config.projectId}/locations/${config.location}/publishers/google/models/${config.model}`;
+      const modelPath = modelName.startsWith('projects/')
+        ? modelName
+        : `projects/${config.projectId}/locations/${config.location}/publishers/google/models/${modelName}`;
       
       const setupMsg = {
         setup: {

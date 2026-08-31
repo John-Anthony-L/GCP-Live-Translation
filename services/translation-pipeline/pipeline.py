@@ -59,9 +59,11 @@ class DisneyTranslationPipeline:
             "latency_ms": round(duration_ms, 2)
         }
 
-    def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "es", use_glossary: bool = True) -> Dict[str, Any]:
+    def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "es", use_glossary: bool = True, model: str = None) -> Dict[str, Any]:
         start_time = time.time()
         parent = f"projects/{PROJECT_ID}/locations/{LOCATION}"
+        model_name = model or os.getenv("TRANSLATION_MODEL", "general/translation-llm")
+        model_path = f"{parent}/models/{model_name}" if not model_name.startswith("projects/") else model_name
         
         request = translate.TranslateTextRequest(
             parent=parent,
@@ -69,6 +71,7 @@ class DisneyTranslationPipeline:
             mime_type="text/plain",
             source_language_code=source_lang,
             target_language_code=target_lang,
+            model=model_path
         )
 
         if use_glossary:
@@ -82,16 +85,20 @@ class DisneyTranslationPipeline:
 
         translated_text = ""
         glossary_applied = False
+        used_model = model_path
 
         if response.glossary_translations:
             translated_text = response.glossary_translations[0].translated_text
             glossary_applied = True
+            used_model = getattr(response.glossary_translations[0], "model", model_path)
         elif response.translations:
             translated_text = response.translations[0].translated_text
+            used_model = getattr(response.translations[0], "model", model_path)
 
         return {
             "translated_text": translated_text,
             "glossary_applied": glossary_applied,
+            "model": used_model,
             "latency_ms": round(duration_ms, 2)
         }
 

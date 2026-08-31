@@ -24,12 +24,14 @@ class TextTranslateRequest(BaseModel):
     source_lang: str = "en"
     target_lang: str = "es"
     use_glossary: bool = True
+    model: Optional[str] = None
 
 class AudioTranslateRequest(BaseModel):
     audio_base64: str
     source_lang: str = "en"
     target_lang: str = "es"
     use_glossary: bool = True
+    model: Optional[str] = None
 
 @app.get("/health")
 def health():
@@ -37,7 +39,8 @@ def health():
         "status": "healthy",
         "service": "translation-pipeline",
         "project_id": os.getenv("PROJECT_ID", "disney-parks-live-translation"),
-        "location": os.getenv("LOCATION", "us-central1")
+        "location": os.getenv("LOCATION", "us-central1"),
+        "translation_model": os.getenv("TRANSLATION_MODEL", "general/translation-llm")
     }
 
 @app.post("/api/translate-text")
@@ -46,7 +49,8 @@ def translate_text(req: TextTranslateRequest):
         text=req.text,
         source_lang=req.source_lang,
         target_lang=req.target_lang,
-        use_glossary=req.use_glossary
+        use_glossary=req.use_glossary,
+        model=req.model
     )
 
 @app.post("/api/translate-audio")

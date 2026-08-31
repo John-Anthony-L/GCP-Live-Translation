@@ -60,10 +60,11 @@ wss.on('connection', async (clientWs: WebSocket, req) => {
   const sourceLang = url.searchParams.get('sourceLang') || 'en';
   const targetLang = url.searchParams.get('targetLang') || 'es';
   const voice = url.searchParams.get('voice') || config.defaultVoice;
+  const modelName = url.searchParams.get('model') || config.model;
   const mode = (url.searchParams.get('mode') || 'interpreter') as 'interpreter';
 
   const sessionId = Math.random().toString(36).substring(2, 12);
-  console.log(`[Proxy] Client connected [${sessionId}]. Pair: ${sourceLang} <-> ${targetLang}, Voice: ${voice}`);
+  console.log(`[Proxy] Client connected [${sessionId}]. Pair: ${sourceLang} <-> ${targetLang}, Voice: ${voice}, Model: ${modelName}`);
 
   const vertexClient = new VertexBidiClient();
   const systemInstruction = buildSystemInstruction(sourceLang, targetLang, mode);
@@ -79,7 +80,7 @@ wss.on('connection', async (clientWs: WebSocket, req) => {
             sessionId,
             sourceLang,
             targetLang,
-            model: config.model
+            model: modelName
           }));
         }
       },
@@ -136,7 +137,7 @@ wss.on('connection', async (clientWs: WebSocket, req) => {
           clientWs.close();
         }
       }
-    });
+    }, modelName);
   } catch (err: any) {
     console.error(`[Proxy] Failed to connect to Vertex AI for session ${sessionId}:`, err.message);
     if (clientWs.readyState === WebSocket.OPEN) {
