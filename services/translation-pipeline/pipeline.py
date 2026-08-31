@@ -10,6 +10,34 @@ from glossary_helper import get_glossary_config
 PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
+def trim_pcm_silence(pcm_data: bytes, threshold: int = 350) -> bytes:
+    """Trim leading and trailing silence from 16-bit mono PCM to dramatically speed up STT processing."""
+    if len(pcm_data) < 4:
+        return pcm_data
+    import struct
+    num_samples = len(pcm_data) // 2
+    try:
+        samples = struct.unpack(f"<{num_samples}h", pcm_data)
+        start_idx = 0
+        while start_idx < num_samples and abs(samples[start_idx]) < threshold:
+            start_idx += 1
+            
+        end_idx = num_samples - 1
+        while end_idx > start_idx and abs(samples[end_idx]) < threshold:
+            end_idx -= 1
+            
+        if start_idx >= end_idx:
+            return pcm_data
+            
+        # Add 100ms padding on edges (1600 samples at 16kHz)
+        start_idx = max(0, start_idx - 1600)
+        end_idx = min(num_samples, end_idx + 1600)
+        
+        trimmed = samples[start_idx:end_idx]
+        return struct.pack(f"<{len(trimmed)}h", *trimmed)
+    except Exception:
+        return pcm_data
+
 class DisneyTranslationPipeline:
     def __init__(self):
         self.speech_client = speech.SpeechClient()
@@ -21,40 +49,33 @@ class DisneyTranslationPipeline:
             "Galaxy's Edge", "Fantasyland", "PhotoPass", "Rider Switch",
             "Single Rider", "Tiana's Bayou Adventure", "Rope Drop", "Park Hopper"
         ]
-
-    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", model: str = None) -> Dict[str, Any]:
-        start_time = time.time()
-        stt_model = model or os.getenv("STT_MODEL", "gemini-3.5-transcribe")
-        
-        # Build speech adaptation phrase set to bias Disney terms
-        speech_context = speech.SpeechContext(
+        self.cached_speech_context = speech.SpeechContext(
             phrases=self.disney_phrases,
             boost=20.0
         )
 
-        try:
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=sample_rate,
-                language_code=lang_code,
-                speech_contexts=[speech_context],
-                enable_automatic_punctuation=True,
-                model=stt_model
-            )
-            audio = speech.RecognitionAudio(content=pcm_data)
-            response = self.speech_client.recognize(config=config, audio=audio)
-        except Exception as e:
-            print(f"[Pipeline] STT model {stt_model} exception, falling back to default: {e}")
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=sample_rate,
-                language_code=lang_code,
-                speech_contexts=[speech_context],
-                enable_automatic_punctuation=True,
-                model="default"
-            )
-            audio = speech.RecognitionAudio(content=pcm_data)
-            response = self.speech_client.recognize(config=config, audio=audio)
+    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", model: str = None) -> Dict[str, Any]:
+        start_time = time.time()
+        
+        # 1. Fast silence trimming to cut payload and model inference time
+        trimmed_pcm = trim_pcm_silence(pcm_data)
+        
+        # 2. Select optimized low-latency model (latest_short is tuned by Google for fast conversational speech)
+        stt_model = model or os.getenv("STT_MODEL", "latest_short")
+        if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
+            stt_model = "latest_short"
+
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=sample_rate,
+            language_code=lang_code,
+            speech_contexts=[self.cached_speech_context],
+            enable_automatic_punctuation=True,
+            model=stt_model
+        )
+        
+        audio = speech.RecognitionAudio(content=trimmed_pcm)
+        response = self.speech_client.recognize(config=config, audio=audio)
         
         duration_ms = (time.time() - start_time) * 1000
         
