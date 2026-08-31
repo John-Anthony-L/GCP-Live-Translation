@@ -2,8 +2,8 @@ import Foundation
 import Combine
 
 public enum TranslationEngine: String, CaseIterable, Identifiable {
-    case geminiLive = "Gemini 2.0 Live API"
-    case translationPipeline = "Translation Advanced Pipeline"
+    case geminiLive = "Gemini 3.5 Live Translate"
+    case translationPipeline = "Translation LLM Advanced Pipeline"
     public var id: String { rawValue }
 }
 
