@@ -269,7 +269,7 @@ input[type="checkbox"]:checked + .toggle-slider::before {
 /* Metrics HUD */
 .metrics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
 }
 

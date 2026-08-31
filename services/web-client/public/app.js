@@ -30,6 +30,9 @@ const chatFeed = document.getElementById('chatFeed');
 const clearChatBtn = document.getElementById('clearChatBtn');
 const latencyValue = document.getElementById('latencyValue');
 const latencySub = document.getElementById('latencySub');
+const sttLatencyVal = document.getElementById('sttLatencyValue');
+const transLatencyVal = document.getElementById('transLatencyValue');
+const ttsLatencyVal = document.getElementById('ttsLatencyValue');
 const engineBadge = document.getElementById('engineBadge');
 const textInput = document.getElementById('textInput');
 const sendTextBtn = document.getElementById('sendTextBtn');
@@ -62,13 +65,15 @@ function setupTabs() {
         document.getElementById('translationSection').classList.add('active');
         
         if (mode === 'gemini-live') {
-          engineBadge.innerText = 'Gemini 2.0 S2S';
-          latencySub.innerText = 'Speech-to-Speech Latency';
-          document.getElementById('audioFormat').innerText = '16kHz In ➔ 24kHz Out';
+          if (sttLatencyVal) sttLatencyVal.innerText = 'N/A';
+          if (transLatencyVal) transLatencyVal.innerText = 'Direct';
+          if (ttsLatencyVal) ttsLatencyVal.innerText = 'S2S';
+          latencySub.innerText = 'Native S2S Latency';
         } else {
-          engineBadge.innerText = 'STT + MT + TTS';
-          latencySub.innerText = 'Pipeline Multi-Hop Latency';
-          document.getElementById('audioFormat').innerText = 'STT v2 ➔ Neural2 TTS';
+          if (sttLatencyVal) sttLatencyVal.innerText = '--';
+          if (transLatencyVal) transLatencyVal.innerText = '--';
+          if (ttsLatencyVal) ttsLatencyVal.innerText = '--';
+          latencySub.innerText = 'Total Pipeline Latency';
         }
         reconnectWebSocket();
       }
@@ -239,24 +244,44 @@ async function connectWebSocket() {
       if (data.type === 'ready') {
         console.log('[WS] Session ready:', data);
         setLiveStatus('Interpreter Ready');
+        updateStatus('connected', 'Live & Ready');
       } else if (data.type === 'stt_transcript') {
         // Live STT Captured Output from Gemini 3.5 Transcribe
         console.log('[WS] Live STT Transcript:', data);
         updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model);
+        if (sttLatencyVal && data.stt_ms !== undefined) {
+          sttLatencyVal.innerText = Math.round(data.stt_ms);
+        }
         setLiveStatus('Translating with Translation LLM...', true);
       } else if (data.type === 'translation_text') {
         // Live Translation Text from general/translation-llm
         console.log('[WS] Live Translation Text:', data);
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
+        if (transLatencyVal && data.translation_ms !== undefined) {
+          transLatencyVal.innerText = Math.round(data.translation_ms);
+        }
         setLiveStatus('Generating Neural Speech...', true);
       } else if (data.type === 'audio' && data.pcm) {
         if (data.total_latency_ms && data.total_latency_ms > 0) {
-          latencyValue.innerText = data.total_latency_ms;
+          latencyValue.innerText = Math.round(data.total_latency_ms);
         } else if (data.latencyMs && data.latencyMs > 0) {
-          latencyValue.innerText = data.latencyMs;
+          latencyValue.innerText = Math.round(data.latencyMs);
         } else if (lastSpeechStartTimestamp > 0) {
-          latencyValue.innerText = Date.now() - lastSpeechStartTimestamp;
+          latencyValue.innerText = Math.round(Date.now() - lastSpeechStartTimestamp);
         }
+
+        if (data.latency_breakdown) {
+          if (sttLatencyVal && data.latency_breakdown.stt_ms !== undefined) {
+            sttLatencyVal.innerText = Math.round(data.latency_breakdown.stt_ms);
+          }
+          if (transLatencyVal && data.latency_breakdown.translation_ms !== undefined) {
+            transLatencyVal.innerText = Math.round(data.latency_breakdown.translation_ms);
+          }
+          if (ttsLatencyVal && data.latency_breakdown.tts_ms !== undefined) {
+            ttsLatencyVal.innerText = Math.round(data.latency_breakdown.tts_ms);
+          }
+        }
+
         setLiveStatus('Playing Translation...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
       } else if (data.type === 'transcript' && data.text) {
@@ -276,13 +301,24 @@ async function connectWebSocket() {
       } else if (data.type === 'interrupted') {
         console.log('[WS] Interrupted');
         setLiveStatus('Interrupted', false);
+      } else if (data.type === 'error') {
+        console.error('[WS] Server error:', data.message);
+        setLiveStatus(`Error: ${data.message}`, false);
+        updateStatus('disconnected', 'Service Error');
       } else if (data.success && data.translated_text) {
         // Translation Pipeline Full Response
-        latencyValue.innerText = data.total_latency_ms;
+        latencyValue.innerText = Math.round(data.total_latency_ms || 0);
         if (data.source_transcript) {
           updateSpeakerOriginalText(data.source_transcript, data.latency_breakdown?.stt_ms);
         }
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.latency_breakdown?.translation_ms);
+
+        if (data.latency_breakdown) {
+          if (sttLatencyVal) sttLatencyVal.innerText = Math.round(data.latency_breakdown.stt_ms || 0);
+          if (transLatencyVal) transLatencyVal.innerText = Math.round(data.latency_breakdown.translation_ms || 0);
+          if (ttsLatencyVal) ttsLatencyVal.innerText = Math.round(data.latency_breakdown.tts_ms || 0);
+        }
+
         if (data.audio_base64) {
           setLiveStatus('Playing Speech...', true);
           playPcmChunk(data.audio_base64, 24000);

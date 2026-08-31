@@ -88,28 +88,39 @@
         <!-- Latency & Performance Telemetry HUD -->
         <div class="metrics-grid">
           <div class="metric-card">
-            <span class="metric-title">Live Latency</span>
+            <span class="metric-title">Total Latency</span>
             <div class="metric-value-row">
               <span id="latencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub" id="latencySub">Speech-to-Speech Latency</span>
+            <span class="metric-sub" id="latencySub">End-to-End Latency</span>
           </div>
 
-          <div class="metric-card">
-            <span class="metric-title">Disney Brand Rules</span>
+          <div class="metric-card" id="sttMetricCard">
+            <span class="metric-title">1. STT Capture</span>
             <div class="metric-value-row">
-              <span id="glossaryStatus" class="metric-val status-pill active">Enforced</span>
+              <span id="sttLatencyValue" class="metric-val">--</span>
+              <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub">Attractions & Terms Protected</span>
+            <span class="metric-sub" id="sttModelSub">gemini-3.5-transcribe</span>
           </div>
 
-          <div class="metric-card">
-            <span class="metric-title">Translation Mode</span>
+          <div class="metric-card" id="transMetricCard">
+            <span class="metric-title">2. Translation LLM</span>
             <div class="metric-value-row">
-              <span id="engineBadge" class="metric-val engine-pill">Gemini 2.0 S2S</span>
+              <span id="transLatencyValue" class="metric-val">--</span>
+              <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub" id="audioFormat">16kHz PCM In ➔ 24kHz Out</span>
+            <span class="metric-sub" id="transModelSub">general/translation-llm</span>
+          </div>
+
+          <div class="metric-card" id="ttsMetricCard">
+            <span class="metric-title">3. TTS Synthesis</span>
+            <div class="metric-value-row">
+              <span id="ttsLatencyValue" class="metric-val">--</span>
+              <span class="metric-unit">ms</span>
+            </div>
+            <span class="metric-sub" id="ttsVoiceSub">Neural2 / Journey</span>
           </div>
         </div>
 
