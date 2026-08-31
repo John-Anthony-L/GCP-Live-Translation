@@ -33,6 +33,26 @@ class AudioTranslateRequest(BaseModel):
     use_glossary: bool = True
     model: Optional[str] = None
 
+@app.get("/")
+def root():
+    return {
+        "service": "Disney Parks Live Translation Advanced Pipeline",
+        "status": "online",
+        "models": {
+            "speech_to_text": os.getenv("STT_MODEL", "gemini-3.5-transcribe"),
+            "machine_translation": os.getenv("TRANSLATION_MODEL", "general/translation-llm"),
+            "text_to_speech": "Neural2 / Journey High Fidelity"
+        },
+        "endpoints": {
+            "health": "/health",
+            "swagger_docs": "/docs",
+            "translate_text": "POST /api/translate-text",
+            "translate_audio": "POST /api/translate-audio",
+            "stream_translate_ws": "WS /ws/stream-translate"
+        },
+        "web_ui": "http://localhost:3000"
+    }
+
 @app.get("/health")
 def health():
     return {
