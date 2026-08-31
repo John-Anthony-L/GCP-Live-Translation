@@ -403,11 +403,17 @@ function setLiveStatus(text, isPulse = false) {
 }
 
 let recordedChunks = [];
+let vadSpeaking = false;
+let vadSilenceStart = 0;
+const VAD_ENERGY_THRESHOLD = 0.016; // Sensitive voice activity threshold
+const VAD_SILENCE_TIMEOUT_MS = 750; // 750ms silence automatically dispatches speech turn
 
 // Audio Recording (Capture 16kHz PCM)
 async function startRecording() {
   if (isRecording) return;
   recordedChunks = [];
+  vadSpeaking = false;
+  vadSilenceStart = 0;
   
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -429,22 +435,55 @@ async function startRecording() {
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = convertFloat32ToInt16(inputData);
 
-      if (currentMode === 'gemini-live') {
-        const base64Pcm = arrayBufferToBase64(pcm16.buffer);
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          const [srcLang, tgtLang] = langPairSelect.value.split('-');
-          socket.send(JSON.stringify({
-            type: 'audio',
-            pcm: base64Pcm,
-            sampleRate: 16000,
-            speakerRole: currentSpeakerRole,
-            sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
-            targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
-          }));
+      // Compute RMS energy for voice activity detection
+      let sum = 0;
+      for (let i = 0; i < inputData.length; i++) {
+        sum += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sum / inputData.length);
+
+      if (isContinuous) {
+        if (rms > VAD_ENERGY_THRESHOLD) {
+          if (!vadSpeaking) {
+            vadSpeaking = true;
+            vadSilenceStart = 0;
+            console.log('[VAD] Speech started! RMS:', rms.toFixed(4));
+            setLiveStatus('🎙️ Voice detected (Listening...)', true);
+            lastSpeechStartTimestamp = Date.now();
+            addMessageBubble('ambient', '🎤 Speaking...');
+          } else {
+            vadSilenceStart = 0;
+          }
+          recordedChunks.push(pcm16);
+        } else if (vadSpeaking) {
+          recordedChunks.push(pcm16);
+          if (vadSilenceStart === 0) {
+            vadSilenceStart = Date.now();
+          } else if (Date.now() - vadSilenceStart > VAD_SILENCE_TIMEOUT_MS) {
+            console.log('[VAD] Speech ended, dispatching translation');
+            vadSpeaking = false;
+            vadSilenceStart = 0;
+            dispatchContinuousUtterance();
+          }
         }
       } else {
-        // Buffer audio for Gemini 3.5 Transcribe STT
-        recordedChunks.push(pcm16);
+        if (currentMode === 'gemini-live') {
+          const base64Pcm = arrayBufferToBase64(pcm16.buffer);
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            const [srcLang, tgtLang] = langPairSelect.value.split('-');
+            socket.send(JSON.stringify({
+              type: 'audio',
+              pcm: base64Pcm,
+              sampleRate: 16000,
+              speakerRole: currentSpeakerRole,
+              sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
+              targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
+            }));
+          }
+        } else {
+          // Buffer audio for Gemini 3.5 Transcribe STT
+          recordedChunks.push(pcm16);
+        }
       }
     };
 
@@ -452,21 +491,53 @@ async function startRecording() {
     scriptProcessor.connect(audioContext.destination);
 
     isRecording = true;
-    const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
-    activeBtn.classList.add('recording');
-    
-    lastSpeechStartTimestamp = Date.now();
-    setLiveStatus(`Listening to ${currentSpeakerRole === 'cast-member' ? 'Cast Member' : 'Guest'}...`, true);
-    addMessageBubble(currentSpeakerRole, "🎤 Speaking...");
+    if (!isContinuous) {
+      const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
+      activeBtn.classList.add('recording');
+      lastSpeechStartTimestamp = Date.now();
+      setLiveStatus(`Listening to ${currentSpeakerRole === 'cast-member' ? 'Cast Member' : 'Guest'}...`, true);
+      addMessageBubble(currentSpeakerRole, "🎤 Speaking...");
+    }
   } catch (err) {
     console.error('Microphone error:', err);
     alert('Please allow microphone access to test live speech translation.');
   }
 }
 
+function dispatchContinuousUtterance() {
+  if (recordedChunks.length === 0) return;
+  setLiveStatus('⚡ Transcribing with Gemini 3.5 Transcribe...', true);
+  
+  let totalLength = 0;
+  for (const chunk of recordedChunks) totalLength += chunk.length;
+  const mergedPcm = new Int16Array(totalLength);
+  let offset = 0;
+  for (const chunk of recordedChunks) {
+    mergedPcm.set(chunk, offset);
+    offset += chunk.length;
+  }
+  recordedChunks = [];
+
+  const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    const [srcLang, tgtLang] = langPairSelect.value.split('-');
+    socket.send(JSON.stringify({
+      type: 'audio',
+      pcm: base64Pcm,
+      sampleRate: 16000,
+      speakerRole: 'ambient',
+      sourceLang: srcLang,
+      targetLang: tgtLang,
+      useGlossary: true
+    }));
+  }
+}
+
 function stopRecording() {
   if (!isRecording) return;
   isRecording = false;
+  vadSpeaking = false;
+  vadSilenceStart = 0;
 
   castMemberMicBtn.classList.remove('recording');
   guestMicBtn.classList.remove('recording');
@@ -480,32 +551,10 @@ function stopRecording() {
     micStream = null;
   }
 
-  if (currentMode === 'translation-pipeline' && recordedChunks.length > 0) {
+  if (!isContinuous && currentMode === 'translation-pipeline' && recordedChunks.length > 0) {
     setLiveStatus('Transcribing with Gemini 3.5 Transcribe...', true);
-    let totalLength = 0;
-    for (const chunk of recordedChunks) totalLength += chunk.length;
-    const mergedPcm = new Int16Array(totalLength);
-    let offset = 0;
-    for (const chunk of recordedChunks) {
-      mergedPcm.set(chunk, offset);
-      offset += chunk.length;
-    }
-    recordedChunks = [];
-
-    const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      const [srcLang, tgtLang] = langPairSelect.value.split('-');
-      socket.send(JSON.stringify({
-        type: 'audio',
-        pcm: base64Pcm,
-        sampleRate: 16000,
-        speakerRole: currentSpeakerRole,
-        sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
-        targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang,
-        useGlossary: true
-      }));
-    }
-  } else {
+    dispatchContinuousUtterance();
+  } else if (!isContinuous) {
     setLiveStatus('Processing...', true);
   }
 }
