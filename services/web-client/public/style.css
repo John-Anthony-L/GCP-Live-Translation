@@ -266,6 +266,21 @@ input[type="checkbox"]:checked + .toggle-slider::before {
   color: var(--text-muted);
 }
 
+.toggle-hint.stream-active {
+  color: #ff5252 !important;
+  font-weight: 600;
+}
+
+.mic-btn.ambient-active {
+  border-color: rgba(255, 82, 82, 0.7) !important;
+  box-shadow: 0 0 15px rgba(255, 82, 82, 0.25);
+}
+
+.message-bubble.ambient {
+  border-left: 3px solid #ff5252;
+  background: rgba(255, 82, 82, 0.08);
+}
+
 /* Metrics HUD */
 .metrics-grid {
   display: grid;

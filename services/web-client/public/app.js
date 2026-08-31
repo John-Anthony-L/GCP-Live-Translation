@@ -83,9 +83,12 @@ function setupTabs() {
 
 // Controls Setup
 function setupControls() {
-  continuousStreamToggle.addEventListener('change', (e) => {
-    isContinuous = e.target.checked;
-    streamModeHint.innerText = isContinuous ? 'Continuous 2-Way (Active)' : 'Dual Push-to-Talk (Active)';
+  continuousStreamToggle.addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      await startContinuousStream();
+    } else {
+      stopContinuousStream();
+    }
   });
 
   langPairSelect.addEventListener('change', () => {
@@ -104,6 +107,7 @@ function setupControls() {
         <p>Chat cleared. Ready for live Disney translation.</p>
       </div>
     `;
+    currentMessageBubble = null;
   });
 
   // Cast Member Push to Talk
@@ -119,6 +123,36 @@ function setupControls() {
   });
 }
 
+async function startContinuousStream() {
+  isContinuous = true;
+  continuousStreamToggle.checked = true;
+  streamModeHint.innerText = '🔴 Continuous 2-Way Stream (Live Hands-Free)';
+  streamModeHint.classList.add('stream-active');
+  castMemberMicBtn.classList.add('ambient-active');
+  guestMicBtn.classList.add('ambient-active');
+  castMemberMicBtn.querySelector('.mic-sub').innerText = '🎙️ Live Ambient Mic';
+  guestMicBtn.querySelector('.mic-sub').innerText = '🎙️ Live Ambient Mic';
+
+  currentSpeakerRole = 'ambient';
+  addMessageBubble('ambient', '🎙️ Hands-free continuous 2-way stream active — speak naturally in English or Spanish...');
+  await startRecording();
+  setLiveStatus('🎙️ Ambient 2-Way Stream Live (Listening...)', true);
+}
+
+function stopContinuousStream() {
+  isContinuous = false;
+  continuousStreamToggle.checked = false;
+  streamModeHint.innerText = 'Dual Push-to-Talk (Active)';
+  streamModeHint.classList.remove('stream-active');
+  castMemberMicBtn.classList.remove('ambient-active');
+  guestMicBtn.classList.remove('ambient-active');
+  castMemberMicBtn.querySelector('.mic-sub').innerText = 'Hold to speak 🇺🇸';
+  updateLanguageLabels();
+
+  stopRecording();
+  setLiveStatus('Ready', false);
+}
+
 function updateLanguageLabels() {
   const [src, tgt] = langPairSelect.value.split('-');
   const langNames = {
@@ -130,22 +164,20 @@ function updateLanguageLabels() {
   };
   const targetInfo = langNames[tgt] || { name: tgt.toUpperCase(), flag: '🌐' };
   guestSpeakerLabel.innerText = `Guest (${targetInfo.name})`;
-  guestBtnSubtext.innerText = `Hold to speak ${targetInfo.flag}`;
+  if (!isContinuous) {
+    guestBtnSubtext.innerText = `Hold to speak ${targetInfo.flag}`;
+  }
 }
 
 function setupMicButton(button, role) {
-  const startHandler = (e) => {
+  const startHandler = async (e) => {
     if (e) e.preventDefault();
     if (isContinuous) {
-      if (isRecording) {
-        stopRecording();
-      } else {
-        currentSpeakerRole = role;
-        startRecording();
-      }
+      // If clicked while continuous is active, toggle continuous off
+      stopContinuousStream();
     } else {
       currentSpeakerRole = role;
-      startRecording();
+      await startRecording();
     }
   };
 
@@ -297,10 +329,16 @@ async function connectWebSocket() {
           if (transEl) transEl.innerText = '';
         }
       } else if (data.type === 'turn_complete') {
-        setLiveStatus('Ready', false);
+        if (isContinuous) {
+          setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
+          currentMessageBubble = null;
+        } else {
+          setLiveStatus('Ready', false);
+        }
       } else if (data.type === 'interrupted') {
-        console.log('[WS] Interrupted');
-        setLiveStatus('Interrupted', false);
+        console.log('[WS] Interrupted by speaker');
+        setLiveStatus('Interrupted (Listening...)', true);
+        currentMessageBubble = null;
       } else if (data.type === 'error') {
         console.error('[WS] Server error:', data.message);
         setLiveStatus(`Error: ${data.message}`, false);
