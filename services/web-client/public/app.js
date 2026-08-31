@@ -239,8 +239,20 @@ async function connectWebSocket() {
       if (data.type === 'ready') {
         console.log('[WS] Session ready:', data);
         setLiveStatus('Interpreter Ready');
+      } else if (data.type === 'stt_transcript') {
+        // Live STT Captured Output from Gemini 3.5 Transcribe
+        console.log('[WS] Live STT Transcript:', data);
+        updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model);
+        setLiveStatus('Translating with Translation LLM...', true);
+      } else if (data.type === 'translation_text') {
+        // Live Translation Text from general/translation-llm
+        console.log('[WS] Live Translation Text:', data);
+        updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
+        setLiveStatus('Generating Neural Speech...', true);
       } else if (data.type === 'audio' && data.pcm) {
-        if (data.latencyMs && data.latencyMs > 0) {
+        if (data.total_latency_ms && data.total_latency_ms > 0) {
+          latencyValue.innerText = data.total_latency_ms;
+        } else if (data.latencyMs && data.latencyMs > 0) {
           latencyValue.innerText = data.latencyMs;
         } else if (lastSpeechStartTimestamp > 0) {
           latencyValue.innerText = Date.now() - lastSpeechStartTimestamp;
@@ -249,15 +261,28 @@ async function connectWebSocket() {
         playPcmChunk(data.pcm, data.sampleRate || 24000);
       } else if (data.type === 'transcript' && data.text) {
         updateMessageTranslation(data.text);
+      } else if (data.type === 'no_speech') {
+        setLiveStatus('Ready', false);
+        if (currentMessageBubble) {
+          const textEl = currentMessageBubble.querySelector('.message-text');
+          if (textEl && textEl.innerText.includes('Speaking')) {
+            textEl.innerText = '(No speech captured - please try speaking closer to mic)';
+          }
+          const transEl = currentMessageBubble.querySelector('.message-translated');
+          if (transEl) transEl.innerText = '';
+        }
       } else if (data.type === 'turn_complete') {
         setLiveStatus('Ready', false);
       } else if (data.type === 'interrupted') {
         console.log('[WS] Interrupted');
         setLiveStatus('Interrupted', false);
       } else if (data.success && data.translated_text) {
-        // Translation Pipeline Response
+        // Translation Pipeline Full Response
         latencyValue.innerText = data.total_latency_ms;
-        updateMessageTranslation(data.translated_text);
+        if (data.source_transcript) {
+          updateSpeakerOriginalText(data.source_transcript, data.latency_breakdown?.stt_ms);
+        }
+        updateMessageTranslation(data.translated_text, data.glossary_applied, data.latency_breakdown?.translation_ms);
         if (data.audio_base64) {
           setLiveStatus('Playing Speech...', true);
           playPcmChunk(data.audio_base64, 24000);
@@ -303,9 +328,12 @@ function setLiveStatus(text, isPulse = false) {
   }
 }
 
+let recordedChunks = [];
+
 // Audio Recording (Capture 16kHz PCM)
 async function startRecording() {
   if (isRecording) return;
+  recordedChunks = [];
   
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -326,18 +354,23 @@ async function startRecording() {
       if (!isRecording) return;
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = convertFloat32ToInt16(inputData);
-      const base64Pcm = arrayBufferToBase64(pcm16.buffer);
 
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        const [srcLang, tgtLang] = langPairSelect.value.split('-');
-        socket.send(JSON.stringify({
-          type: 'audio',
-          pcm: base64Pcm,
-          sampleRate: 16000,
-          speakerRole: currentSpeakerRole,
-          sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
-          targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
-        }));
+      if (currentMode === 'gemini-live') {
+        const base64Pcm = arrayBufferToBase64(pcm16.buffer);
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          const [srcLang, tgtLang] = langPairSelect.value.split('-');
+          socket.send(JSON.stringify({
+            type: 'audio',
+            pcm: base64Pcm,
+            sampleRate: 16000,
+            speakerRole: currentSpeakerRole,
+            sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
+            targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
+          }));
+        }
+      } else {
+        // Buffer audio for Gemini 3.5 Transcribe STT
+        recordedChunks.push(pcm16);
       }
     };
 
@@ -372,7 +405,35 @@ function stopRecording() {
     micStream.getTracks().forEach(track => track.stop());
     micStream = null;
   }
-  setLiveStatus('Processing...', true);
+
+  if (currentMode === 'translation-pipeline' && recordedChunks.length > 0) {
+    setLiveStatus('Transcribing with Gemini 3.5 Transcribe...', true);
+    let totalLength = 0;
+    for (const chunk of recordedChunks) totalLength += chunk.length;
+    const mergedPcm = new Int16Array(totalLength);
+    let offset = 0;
+    for (const chunk of recordedChunks) {
+      mergedPcm.set(chunk, offset);
+      offset += chunk.length;
+    }
+    recordedChunks = [];
+
+    const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      const [srcLang, tgtLang] = langPairSelect.value.split('-');
+      socket.send(JSON.stringify({
+        type: 'audio',
+        pcm: base64Pcm,
+        sampleRate: 16000,
+        speakerRole: currentSpeakerRole,
+        sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
+        targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang,
+        useGlossary: true
+      }));
+    }
+  } else {
+    setLiveStatus('Processing...', true);
+  }
 }
 
 // Convert Float32 to Int16 PCM
@@ -447,15 +508,23 @@ function addMessageBubble(role, originalText) {
   currentMessageBubble = bubble;
 }
 
-function updateMessageTranslation(translatedText) {
+function updateSpeakerOriginalText(transcript, sttMs, sttModel) {
+  if (!currentMessageBubble) return;
+  const textEl = currentMessageBubble.querySelector('.message-text');
+  if (textEl) {
+    const modelBadge = sttModel ? ` <span class="badge-mini">⚡ ${sttModel} (${Math.round(sttMs || 0)}ms)</span>` : (sttMs ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '');
+    textEl.innerHTML = `"${transcript}"${modelBadge}`;
+  }
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+
+function updateMessageTranslation(translatedText, glossaryApplied, transMs) {
   if (!currentMessageBubble) return;
   const transEl = currentMessageBubble.querySelector('.message-translated');
   if (transEl) {
-    if (transEl.innerText.startsWith('🔄 Translating')) {
-      transEl.innerText = `✨ ${translatedText}`;
-    } else {
-      transEl.innerText += translatedText;
-    }
+    const glossaryBadge = glossaryApplied ? ' <span class="badge-mini badge-glossary">🔒 Disney Glossary Applied</span>' : '';
+    const latencyBadge = transMs ? ` <span class="badge-mini">⏱️ ${Math.round(transMs)}ms</span>` : '';
+    transEl.innerHTML = `✨ ${translatedText}${glossaryBadge}${latencyBadge}`;
   }
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }

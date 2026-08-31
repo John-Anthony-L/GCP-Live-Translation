@@ -742,3 +742,21 @@ input[type="checkbox"]:checked + .toggle-slider::before {
   0%, 100% { height: 6px; }
   50% { height: 26px; }
 }
+
+.badge-mini {
+  display: inline-block;
+  font-size: 0.68rem;
+  background: rgba(255, 255, 255, 0.12);
+  color: #90caf9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.badge-glossary {
+  background: rgba(255, 215, 0, 0.18);
+  color: #ffd54f;
+  border: 1px solid rgba(255, 215, 0, 0.3);
+}

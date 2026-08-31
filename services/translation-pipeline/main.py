@@ -120,19 +120,110 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
+            src = data.get("sourceLang", "en")
+            tgt = data.get("targetLang", "es")
+            use_glossary = data.get("useGlossary", True)
+            speaker_role = data.get("speakerRole", "cast-member")
+
             if data.get("type") == "audio" and "pcm" in data:
                 pcm_bytes = base64.b64decode(data["pcm"])
-                src = data.get("sourceLang", "en")
-                tgt = data.get("targetLang", "es")
-                use_glossary = data.get("useGlossary", True)
                 
-                result = pipeline.run_full_pipeline(
-                    pcm_bytes=pcm_bytes,
+                # 1. Real-time STT with Gemini 3.5 Transcribe
+                stt_lang = f"{src}-US" if src in ["en", "es"] else f"{src}-{src.upper()}"
+                stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang)
+                
+                # Push STT transcript immediately to client
+                await websocket.send_json({
+                    "type": "stt_transcript",
+                    "transcript": stt_res["transcript"],
+                    "confidence": stt_res["confidence"],
+                    "stt_ms": stt_res["latency_ms"],
+                    "stt_model": stt_res.get("stt_model", "gemini-3.5-transcribe"),
+                    "speakerRole": speaker_role
+                })
+
+                if not stt_res["transcript"]:
+                    await websocket.send_json({"type": "no_speech", "message": "No audible speech detected"})
+                    continue
+
+                # 2. Real-time Translation with Translation LLM
+                mt_res = pipeline.translate_text(
+                    stt_res["transcript"],
                     source_lang=src,
                     target_lang=tgt,
                     use_glossary=use_glossary
                 )
-                await websocket.send_json(result)
+
+                # Push Translation text immediately
+                await websocket.send_json({
+                    "type": "translation_text",
+                    "translated_text": mt_res["translated_text"],
+                    "glossary_applied": mt_res["glossary_applied"],
+                    "translation_ms": mt_res["latency_ms"],
+                    "model": mt_res["model"]
+                })
+
+                # 3. High Fidelity Speech Synthesis
+                tts_lang_code = f"{tgt}-US" if tgt == "es" else f"{tgt}-{tgt.upper()}"
+                tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
+                
+                total_latency = round(stt_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
+                
+                # Push audio stream for instant playback
+                await websocket.send_json({
+                    "type": "audio",
+                    "pcm": tts_res["audio_base64"],
+                    "sampleRate": 24000,
+                    "total_latency_ms": total_latency,
+                    "latency_breakdown": {
+                        "stt_ms": stt_res["latency_ms"],
+                        "translation_ms": mt_res["latency_ms"],
+                        "tts_ms": tts_res["latency_ms"]
+                    }
+                })
+
+            elif data.get("type") == "text" and "text" in data:
+                text_input = data["text"]
+                # Send immediate STT confirmation
+                await websocket.send_json({
+                    "type": "stt_transcript",
+                    "transcript": text_input,
+                    "confidence": 1.0,
+                    "stt_ms": 0.0,
+                    "speakerRole": speaker_role
+                })
+
+                mt_res = pipeline.translate_text(
+                    text_input,
+                    source_lang=src,
+                    target_lang=tgt,
+                    use_glossary=use_glossary
+                )
+
+                await websocket.send_json({
+                    "type": "translation_text",
+                    "translated_text": mt_res["translated_text"],
+                    "glossary_applied": mt_res["glossary_applied"],
+                    "translation_ms": mt_res["latency_ms"],
+                    "model": mt_res["model"]
+                })
+
+                tts_lang_code = f"{tgt}-US" if tgt == "es" else f"{tgt}-{tgt.upper()}"
+                tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
+
+                total_latency = round(mt_res["latency_ms"] + tts_res["latency_ms"], 2)
+
+                await websocket.send_json({
+                    "type": "audio",
+                    "pcm": tts_res["audio_base64"],
+                    "sampleRate": 24000,
+                    "total_latency_ms": total_latency,
+                    "latency_breakdown": {
+                        "stt_ms": 0.0,
+                        "translation_ms": mt_res["latency_ms"],
+                        "tts_ms": tts_res["latency_ms"]
+                    }
+                })
     except WebSocketDisconnect:
         print("[PipelineWS] Client disconnected")
     except Exception as e:
