@@ -425,6 +425,9 @@ async function startRecording() {
 
     scriptProcessor.onaudioprocess = (e) => {
       if (!isRecording) return;
+      // If speaker is currently outputting synthesized translation, suppress VAD to avoid acoustic loop
+      if (isSpeakingSelf) return;
+
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = convertFloat32ToInt16(inputData);
 
@@ -561,32 +564,72 @@ function arrayBufferToBase64(buffer) {
   return window.btoa(binary);
 }
 
-// Audio Playback (PCM 24kHz)
+// Sequential FIFO Audio Playback Queue to prevent speech overlap
+let audioPlaybackQueue = [];
+let isPlayingAudio = false;
+let isSpeakingSelf = false;
+
 function playPcmChunk(base64Data, sampleRate = 24000) {
+  audioPlaybackQueue.push({ base64Data, sampleRate });
+  if (!isPlayingAudio) {
+    processNextAudioInQueue();
+  }
+}
+
+function processNextAudioInQueue() {
+  if (audioPlaybackQueue.length === 0) {
+    isPlayingAudio = false;
+    // Allow 350ms cooldown before un-muting mic VAD to prevent speaker echo re-triggering
+    setTimeout(() => {
+      isSpeakingSelf = false;
+      if (isContinuous) {
+        setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
+      }
+    }, 350);
+    return;
+  }
+
+  isPlayingAudio = true;
+  isSpeakingSelf = true;
+  const { base64Data, sampleRate } = audioPlaybackQueue.shift();
+
   if (!playbackContext) {
     playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
   }
-
-  const binaryString = window.atob(base64Data);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+  if (playbackContext.state === 'suspended') {
+    playbackContext.resume();
   }
 
-  const int16Array = new Int16Array(bytes.buffer);
-  const float32Array = new Float32Array(int16Array.length);
-  for (let i = 0; i < int16Array.length; i++) {
-    float32Array[i] = int16Array[i] / 32768.0;
+  try {
+    const binaryString = window.atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const int16Array = new Int16Array(bytes.buffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      float32Array[i] = int16Array[i] / 32768.0;
+    }
+
+    const audioBuffer = playbackContext.createBuffer(1, float32Array.length, sampleRate);
+    audioBuffer.getChannelData(0).set(float32Array);
+
+    const sourceNode = playbackContext.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(playbackContext.destination);
+
+    sourceNode.onended = () => {
+      processNextAudioInQueue();
+    };
+
+    sourceNode.start();
+  } catch (err) {
+    console.error('[Audio Queue] Playback error:', err);
+    processNextAudioInQueue();
   }
-
-  const audioBuffer = playbackContext.createBuffer(1, float32Array.length, sampleRate);
-  audioBuffer.getChannelData(0).set(float32Array);
-
-  const sourceNode = playbackContext.createBufferSource();
-  sourceNode.buffer = audioBuffer;
-  sourceNode.connect(playbackContext.destination);
-  sourceNode.start();
 }
 
 // Dialogue UI Feed
