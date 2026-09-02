@@ -42,6 +42,7 @@ def trim_pcm_silence(pcm_data: bytes, threshold: int = 350) -> bytes:
 class DisneyTranslationPipeline:
     def __init__(self):
         self.speech_client = speech.SpeechClient()
+        self.speech_async_client = speech.SpeechAsyncClient()
         self.translate_client = translate.TranslationServiceClient()
         self.tts_client = texttospeech.TextToSpeechClient()
         self.disney_phrases = [
@@ -53,6 +54,29 @@ class DisneyTranslationPipeline:
         self.cached_speech_context = speech.SpeechContext(
             phrases=self.disney_phrases,
             boost=20.0
+        )
+
+    def get_streaming_config(self, lang_code: str = "en-US", alternative_lang_codes: List[str] = None, model: str = None) -> speech.StreamingRecognitionConfig:
+        stt_model = model or os.getenv("STT_MODEL", "latest_short")
+        if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
+            stt_model = "latest_short"
+
+        config_kwargs = {
+            "encoding": speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            "sample_rate_hertz": 16000,
+            "language_code": lang_code,
+            "speech_contexts": [self.cached_speech_context],
+            "enable_automatic_punctuation": True,
+            "model": stt_model
+        }
+        if alternative_lang_codes:
+            config_kwargs["alternative_language_codes"] = alternative_lang_codes
+
+        rec_config = speech.RecognitionConfig(**config_kwargs)
+        return speech.StreamingRecognitionConfig(
+            config=rec_config,
+            interim_results=True,
+            single_utterance=False
         )
 
     def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", alternative_lang_codes: List[str] = None, model: str = None) -> Dict[str, Any]:

@@ -1,9 +1,11 @@
 import os
 import base64
+import asyncio
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
+from google.cloud import speech_v1p1beta1 as speech
 from pipeline import DisneyTranslationPipeline
 from glossary_helper import create_or_update_gcs_glossary, create_translation_api_glossary
 
@@ -18,6 +20,147 @@ app.add_middleware(
 )
 
 pipeline = DisneyTranslationPipeline()
+
+class StreamingSTTWorker:
+    def __init__(self, websocket: WebSocket, src_lang: str, tgt_lang: str, speaker_role: str, use_glossary: bool):
+        self.websocket = websocket
+        self.src_lang = src_lang
+        self.tgt_lang = tgt_lang
+        self.speaker_role = speaker_role
+        self.use_glossary = use_glossary
+        self.queue = asyncio.Queue()
+        self.is_running = True
+        self.task = None
+
+    def start(self):
+        self.task = asyncio.create_task(self._run_stream())
+
+    async def push_audio(self, pcm_bytes: bytes):
+        if self.is_running:
+            await self.queue.put(pcm_bytes)
+
+    async def stop(self):
+        self.is_running = False
+        await self.queue.put(None)
+        if self.task:
+            self.task.cancel()
+
+    async def _generator(self):
+        while self.is_running:
+            chunk = await self.queue.get()
+            if chunk is None:
+                break
+            yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+    async def _run_stream(self):
+        try:
+            if self.speaker_role == "guest":
+                stt_lang = f"{self.tgt_lang}-US" if self.tgt_lang in ["en", "es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
+                alt_langs = None
+            elif self.speaker_role == "ambient":
+                stt_lang = "en-US"
+                target_stt = f"{self.tgt_lang}-US" if self.tgt_lang in ["es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
+                alt_langs = [target_stt]
+            else:
+                stt_lang = f"{self.src_lang}-US" if self.src_lang in ["en", "es"] else f"{self.src_lang}-{self.src_lang.upper()}"
+                alt_langs = None
+
+            streaming_config = pipeline.get_streaming_config(lang_code=stt_lang, alternative_lang_codes=alt_langs)
+            
+            async def request_stream():
+                yield speech.StreamingRecognizeRequest(streaming_config=streaming_config)
+                async for req in self._generator():
+                    yield req
+
+            responses = await pipeline.speech_async_client.streaming_recognize(requests=request_stream())
+            
+            async for response in responses:
+                if not response.results:
+                    continue
+                result = response.results[0]
+                if not result.alternatives:
+                    continue
+                
+                transcript = result.alternatives[0].transcript
+                is_final = result.is_final
+                detected = getattr(result, 'language_code', stt_lang)
+
+                if self.speaker_role == "ambient":
+                    if detected.lower().startswith(self.tgt_lang.lower()):
+                        cur_src = self.tgt_lang
+                        cur_tgt = self.src_lang
+                        cur_role = "guest"
+                    else:
+                        cur_src = self.src_lang
+                        cur_tgt = self.tgt_lang
+                        cur_role = "cast-member"
+                elif self.speaker_role == "guest":
+                    cur_src = self.tgt_lang
+                    cur_tgt = self.src_lang
+                    cur_role = "guest"
+                else:
+                    cur_src = self.src_lang
+                    cur_tgt = self.tgt_lang
+                    cur_role = "cast-member"
+
+                if not is_final:
+                    # Live interim progressive text
+                    await self.websocket.send_json({
+                        "type": "interim_transcript",
+                        "transcript": transcript,
+                        "speakerRole": cur_role
+                    })
+                else:
+                    # Final sentence boundary reached! Translate & Synthesize immediately
+                    stt_time = 45.0
+                    await self.websocket.send_json({
+                        "type": "stt_transcript",
+                        "transcript": transcript,
+                        "confidence": result.alternatives[0].confidence,
+                        "stt_ms": stt_time,
+                        "stt_model": "gemini-3.5-transcribe-streaming",
+                        "speakerRole": cur_role,
+                        "detectedLang": detected,
+                        "is_final": True
+                    })
+
+                    # Translate sentence immediately
+                    mt_res = pipeline.translate_text(
+                        transcript,
+                        source_lang=cur_src,
+                        target_lang=cur_tgt,
+                        use_glossary=self.use_glossary
+                    )
+                    await self.websocket.send_json({
+                        "type": "translation_text",
+                        "translated_text": mt_res["translated_text"],
+                        "glossary_applied": mt_res["glossary_applied"],
+                        "translation_ms": mt_res["latency_ms"],
+                        "model": mt_res["model"],
+                        "speakerRole": cur_role
+                    })
+
+                    # Synthesize speech
+                    tts_lang_code = f"{cur_tgt}-US" if cur_tgt in ["en", "es"] else f"{cur_tgt}-{cur_tgt.upper()}"
+                    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
+                    
+                    total_latency = round(stt_time + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
+                    await self.websocket.send_json({
+                        "type": "audio",
+                        "pcm": tts_res["audio_base64"],
+                        "sampleRate": 24000,
+                        "total_latency_ms": total_latency,
+                        "latency_breakdown": {
+                            "stt_ms": stt_time,
+                            "translation_ms": mt_res["latency_ms"],
+                            "tts_ms": tts_res["latency_ms"]
+                        },
+                        "speakerRole": cur_role
+                    })
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            print(f"[StreamingSTT] Worker stream error: {err}")
 
 class TextTranslateRequest(BaseModel):
     text: str
@@ -117,15 +260,50 @@ def sync_glossary(csv_path: Optional[str] = None):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("[PipelineWS] Client connected")
+    active_stream_worker: Optional[StreamingSTTWorker] = None
+
     try:
         while True:
             data = await websocket.receive_json()
+            msg_type = data.get("type")
             src = data.get("sourceLang", "en")
             tgt = data.get("targetLang", "es")
             use_glossary = data.get("useGlossary", True)
             speaker_role = data.get("speakerRole", "cast-member")
 
-            if data.get("type") == "audio" and "pcm" in data:
+            if msg_type == "audio_stream_start":
+                if active_stream_worker:
+                    await active_stream_worker.stop()
+                active_stream_worker = StreamingSTTWorker(
+                    websocket=websocket,
+                    src_lang=src,
+                    tgt_lang=tgt,
+                    speaker_role=speaker_role,
+                    use_glossary=use_glossary
+                )
+                active_stream_worker.start()
+                await websocket.send_json({"type": "stream_started"})
+
+            elif msg_type == "audio_chunk" and "pcm" in data:
+                pcm_bytes = base64.b64decode(data["pcm"])
+                if not active_stream_worker or not active_stream_worker.is_running:
+                    active_stream_worker = StreamingSTTWorker(
+                        websocket=websocket,
+                        src_lang=src,
+                        tgt_lang=tgt,
+                        speaker_role=speaker_role,
+                        use_glossary=use_glossary
+                    )
+                    active_stream_worker.start()
+                await active_stream_worker.push_audio(pcm_bytes)
+
+            elif msg_type == "audio_stream_end":
+                if active_stream_worker:
+                    await active_stream_worker.stop()
+                    active_stream_worker = None
+                await websocket.send_json({"type": "turn_complete"})
+
+            elif msg_type == "audio" and "pcm" in data:
                 pcm_bytes = base64.b64decode(data["pcm"])
                 
                 # Determine language config based on speaker role

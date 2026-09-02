@@ -285,21 +285,32 @@ async function connectWebSocket() {
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
-      if (data.type === 'ready') {
+      if (data.type === 'ready' || data.type === 'stream_started') {
         console.log('[WS] Session ready:', data);
         setLiveStatus('Ready');
         updateStatus('connected', 'Live & Ready');
-      } else if (data.type === 'stt_transcript') {
-        console.log('[WS] STT Transcript:', data);
+      } else if (data.type === 'interim_transcript') {
+        // Real-time progressive interim STT as user speaks
         const role = data.speakerRole || currentSpeakerRole;
-        if (!currentMessageBubble || currentSpeakerRole === 'ambient') {
+        if (!currentMessageBubble) {
+          addMessageBubble(role, data.transcript);
+        } else {
+          const textEl = currentMessageBubble.querySelector('.message-text');
+          if (textEl) {
+            textEl.innerHTML = `<span class="interim-text">"${data.transcript}..."</span> <span class="badge-mini">⚡ live</span>`;
+          }
+        }
+      } else if (data.type === 'stt_transcript') {
+        console.log('[WS] STT Transcript (Sentence boundary):', data);
+        const role = data.speakerRole || currentSpeakerRole;
+        if (!currentMessageBubble) {
           addMessageBubble(role, data.transcript);
         }
         updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model, role);
         if (sttLatencyVal && data.stt_ms !== undefined) {
           sttLatencyVal.innerText = Math.round(data.stt_ms);
         }
-        setLiveStatus('Translating with Translation LLM...', true);
+        setLiveStatus('Translating sentence...', true);
       } else if (data.type === 'translation_text') {
         console.log('[WS] Translation Text:', data);
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
@@ -328,6 +339,10 @@ async function connectWebSocket() {
 
         setLiveStatus('Playing Translation Speech...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
+        // In continuous mode, prepare next bubble for subsequent sentences
+        if (isContinuous) {
+          currentMessageBubble = null;
+        }
       } else if (data.type === 'transcript' && data.text) {
         updateMessageTranslation(data.text);
       } else if (data.type === 'no_speech') {
@@ -446,20 +461,42 @@ async function startRecording() {
             console.log('[VAD] Speech started! RMS:', rms.toFixed(4));
             setLiveStatus('🎙️ Voice detected (Listening...)', true);
             lastSpeechStartTimestamp = Date.now();
-            addMessageBubble('ambient', '🎤 Speaking...');
+            addMessageBubble('ambient', '🎤 Listening...');
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              const [srcLang, tgtLang] = langPairSelect.value.split('-');
+              socket.send(JSON.stringify({
+                type: 'audio_stream_start',
+                speakerRole: 'ambient',
+                sourceLang: srcLang,
+                targetLang: tgtLang,
+                useGlossary: true
+              }));
+            }
           } else {
             vadSilenceStart = 0;
           }
-          recordedChunks.push(pcm16);
+
+          // Stream audio chunk in real-time
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            const base64Chunk = arrayBufferToBase64(pcm16.buffer);
+            socket.send(JSON.stringify({
+              type: 'audio_chunk',
+              pcm: base64Chunk,
+              speakerRole: 'ambient'
+            }));
+          }
         } else if (vadSpeaking) {
-          recordedChunks.push(pcm16);
           if (vadSilenceStart === 0) {
             vadSilenceStart = Date.now();
           } else if (Date.now() - vadSilenceStart > VAD_SILENCE_TIMEOUT_MS) {
-            console.log('[VAD] Speech ended, dispatching translation');
+            console.log('[VAD] Speech pause detected');
             vadSpeaking = false;
             vadSilenceStart = 0;
-            dispatchContinuousUtterance('ambient');
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({
+                type: 'audio_stream_end'
+              }));
+            }
           }
         }
       } else {
