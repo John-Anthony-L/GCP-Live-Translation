@@ -1,6 +1,6 @@
-// Disney Parks 2-Way Live Translation Client
-let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'gemini-live'
-let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest'
+// Disney Parks 2-Way Live Translation Client (Powered by Translation LLM Advanced v3)
+let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'glossary'
+let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest' | 'ambient'
 let isRecording = false;
 let isContinuous = false;
 let socket = null;
@@ -11,6 +11,11 @@ let playbackContext = null;
 let currentMessageBubble = null;
 let lastSpeechStartTimestamp = 0;
 let glossaryData = [];
+let recordedChunks = [];
+let vadSpeaking = false;
+let vadSilenceStart = 0;
+const VAD_ENERGY_THRESHOLD = 0.015; // Sensitive voice activity threshold
+const VAD_SILENCE_TIMEOUT_MS = 750; // 750ms silence automatically dispatches speech turn
 
 // DOM Elements
 const connectionStatus = document.getElementById('connectionStatus');
@@ -43,7 +48,7 @@ const glossarySearch = document.getElementById('glossarySearch');
 async function init() {
   setupTabs();
   setupControls();
-  setupGlossary();
+  await setupGlossary();
   setupQuickScenarios();
   await connectWebSocket();
 }
@@ -60,21 +65,9 @@ function setupTabs() {
         document.getElementById('translationSection').classList.remove('active');
         document.getElementById('glossarySection').classList.add('active');
       } else {
-        currentMode = mode;
+        currentMode = 'translation-pipeline';
         document.getElementById('glossarySection').classList.remove('active');
         document.getElementById('translationSection').classList.add('active');
-        
-        if (mode === 'gemini-live') {
-          if (sttLatencyVal) sttLatencyVal.innerText = 'N/A';
-          if (transLatencyVal) transLatencyVal.innerText = 'Direct';
-          if (ttsLatencyVal) ttsLatencyVal.innerText = 'S2S';
-          latencySub.innerText = 'Native S2S Latency';
-        } else {
-          if (sttLatencyVal) sttLatencyVal.innerText = '--';
-          if (transLatencyVal) transLatencyVal.innerText = '--';
-          if (ttsLatencyVal) ttsLatencyVal.innerText = '--';
-          latencySub.innerText = 'Total Pipeline Latency';
-        }
         reconnectWebSocket();
       }
     });
@@ -173,7 +166,6 @@ function setupMicButton(button, role) {
   const startHandler = async (e) => {
     if (e) e.preventDefault();
     if (isContinuous) {
-      // If clicked while continuous is active, toggle continuous off
       stopContinuousStream();
     } else {
       currentSpeakerRole = role;
@@ -207,20 +199,19 @@ function setupQuickScenarios() {
 
       if (socket && socket.readyState === WebSocket.OPEN) {
         lastSpeechStartTimestamp = Date.now();
-        setLiveStatus('Translating scenario...', true);
+        setLiveStatus('Translating scenario with Translation LLM...', true);
         
-        if (currentMode === 'gemini-live') {
-          socket.send(JSON.stringify({ type: 'text', text }));
-        } else {
-          // Translation pipeline via WebSocket
-          const [src, tgt] = langPairSelect.value.split('-');
-          socket.send(JSON.stringify({
-            type: 'text',
-            text,
-            sourceLang: lang === 'en' ? src : tgt,
-            targetLang: lang === 'en' ? tgt : src
-          }));
-        }
+        const [src, tgt] = langPairSelect.value.split('-');
+        const isCastMember = role === 'cast-member';
+        
+        socket.send(JSON.stringify({
+          type: 'text',
+          text,
+          speakerRole: role,
+          sourceLang: isCastMember ? src : tgt,
+          targetLang: isCastMember ? tgt : src,
+          useGlossary: true
+        }));
       }
     });
   });
@@ -236,8 +227,16 @@ function handleSendText() {
 
   if (socket && socket.readyState === WebSocket.OPEN) {
     lastSpeechStartTimestamp = Date.now();
-    setLiveStatus('Translating...', true);
-    socket.send(JSON.stringify({ type: 'text', text }));
+    setLiveStatus('Translating with Translation LLM...', true);
+    const [src, tgt] = langPairSelect.value.split('-');
+    socket.send(JSON.stringify({
+      type: 'text',
+      text,
+      speakerRole: 'cast-member',
+      sourceLang: src,
+      targetLang: tgt,
+      useGlossary: true
+    }));
   }
 }
 
@@ -245,27 +244,33 @@ function handleSendText() {
 async function connectWebSocket() {
   updateStatus('connecting', 'Connecting...');
   
-  const [srcLang, tgtLang] = langPairSelect.value.split('-');
-  const voice = personaVoiceSelect.value;
-  
   let wsUrl = '';
-  const host = window.location.hostname;
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  
-  if (currentMode === 'gemini-live') {
-    // If port is 3000 in local dev, proxy is on 8090. On Cloud Run, URL is same host.
-    const port = window.location.port === '3000' ? '8090' : window.location.port;
-    wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/live-translate?sourceLang=${srcLang}&targetLang=${tgtLang}&voice=${voice}`;
-  } else {
+  try {
+    const configRes = await fetch('/config.json');
+    if (configRes.ok) {
+      const config = await configRes.json();
+      if (config.translationPipelineWsUrl) {
+        wsUrl = config.translationPipelineWsUrl;
+      }
+    }
+  } catch (e) {
+    console.log('[Config] Using location-based WebSocket routing');
+  }
+
+  if (!wsUrl) {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const port = window.location.port === '3000' ? '8092' : window.location.port;
     wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/ws/stream-translate`;
   }
+
+  console.log(`[WS] Connecting to ${wsUrl}`);
 
   try {
     socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
-      console.log(`[WS] Connected to ${currentMode}`);
+      console.log(`[WS] Connected to Translation Pipeline`);
       updateStatus('connected', 'Live & Ready');
       setLiveStatus('Ready');
     };
@@ -275,19 +280,21 @@ async function connectWebSocket() {
 
       if (data.type === 'ready') {
         console.log('[WS] Session ready:', data);
-        setLiveStatus('Interpreter Ready');
+        setLiveStatus('Ready');
         updateStatus('connected', 'Live & Ready');
       } else if (data.type === 'stt_transcript') {
-        // Live STT Captured Output from Gemini 3.5 Transcribe
-        console.log('[WS] Live STT Transcript:', data);
-        updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model);
+        console.log('[WS] STT Transcript:', data);
+        const role = data.speakerRole || currentSpeakerRole;
+        if (!currentMessageBubble || currentSpeakerRole === 'ambient') {
+          addMessageBubble(role, data.transcript);
+        }
+        updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model, role);
         if (sttLatencyVal && data.stt_ms !== undefined) {
           sttLatencyVal.innerText = Math.round(data.stt_ms);
         }
         setLiveStatus('Translating with Translation LLM...', true);
       } else if (data.type === 'translation_text') {
-        // Live Translation Text from general/translation-llm
-        console.log('[WS] Live Translation Text:', data);
+        console.log('[WS] Translation Text:', data);
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
         if (transLatencyVal && data.translation_ms !== undefined) {
           transLatencyVal.innerText = Math.round(data.translation_ms);
@@ -296,8 +303,6 @@ async function connectWebSocket() {
       } else if (data.type === 'audio' && data.pcm) {
         if (data.total_latency_ms && data.total_latency_ms > 0) {
           latencyValue.innerText = Math.round(data.total_latency_ms);
-        } else if (data.latencyMs && data.latencyMs > 0) {
-          latencyValue.innerText = Math.round(data.latencyMs);
         } else if (lastSpeechStartTimestamp > 0) {
           latencyValue.innerText = Math.round(Date.now() - lastSpeechStartTimestamp);
         }
@@ -314,53 +319,34 @@ async function connectWebSocket() {
           }
         }
 
-        setLiveStatus('Playing Translation...', true);
+        setLiveStatus('Playing Translation Speech...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
       } else if (data.type === 'transcript' && data.text) {
         updateMessageTranslation(data.text);
       } else if (data.type === 'no_speech') {
-        setLiveStatus('Ready', false);
+        setLiveStatus(isContinuous ? '🎙️ Ambient Mic Active (Listening...)' : 'Ready', isContinuous);
         if (currentMessageBubble) {
           const textEl = currentMessageBubble.querySelector('.message-text');
           if (textEl && textEl.innerText.includes('Speaking')) {
-            textEl.innerText = '(No speech captured - please try speaking closer to mic)';
+            textEl.innerText = '(No clear speech detected - please speak closer to microphone)';
           }
           const transEl = currentMessageBubble.querySelector('.message-translated');
           if (transEl) transEl.innerText = '';
         }
       } else if (data.type === 'turn_complete') {
         if (isContinuous) {
-          setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
+          setLiveStatus('🎙️ Ambient Mic Active (Listening for English or Spanish...)', true);
           currentMessageBubble = null;
         } else {
           setLiveStatus('Ready', false);
         }
       } else if (data.type === 'interrupted') {
-        console.log('[WS] Interrupted by speaker');
         setLiveStatus('Interrupted (Listening...)', true);
         currentMessageBubble = null;
       } else if (data.type === 'error') {
         console.error('[WS] Server error:', data.message);
         setLiveStatus(`Error: ${data.message}`, false);
         updateStatus('disconnected', 'Service Error');
-      } else if (data.success && data.translated_text) {
-        // Translation Pipeline Full Response
-        latencyValue.innerText = Math.round(data.total_latency_ms || 0);
-        if (data.source_transcript) {
-          updateSpeakerOriginalText(data.source_transcript, data.latency_breakdown?.stt_ms);
-        }
-        updateMessageTranslation(data.translated_text, data.glossary_applied, data.latency_breakdown?.translation_ms);
-
-        if (data.latency_breakdown) {
-          if (sttLatencyVal) sttLatencyVal.innerText = Math.round(data.latency_breakdown.stt_ms || 0);
-          if (transLatencyVal) transLatencyVal.innerText = Math.round(data.latency_breakdown.translation_ms || 0);
-          if (ttsLatencyVal) ttsLatencyVal.innerText = Math.round(data.latency_breakdown.tts_ms || 0);
-        }
-
-        if (data.audio_base64) {
-          setLiveStatus('Playing Speech...', true);
-          playPcmChunk(data.audio_base64, 24000);
-        }
       }
     };
 
@@ -401,12 +387,6 @@ function setLiveStatus(text, isPulse = false) {
     audioPulse.classList.remove('active');
   }
 }
-
-let recordedChunks = [];
-let vadSpeaking = false;
-let vadSilenceStart = 0;
-const VAD_ENERGY_THRESHOLD = 0.016; // Sensitive voice activity threshold
-const VAD_SILENCE_TIMEOUT_MS = 750; // 750ms silence automatically dispatches speech turn
 
 // Audio Recording (Capture 16kHz PCM)
 async function startRecording() {
@@ -463,27 +443,12 @@ async function startRecording() {
             console.log('[VAD] Speech ended, dispatching translation');
             vadSpeaking = false;
             vadSilenceStart = 0;
-            dispatchContinuousUtterance();
+            dispatchContinuousUtterance('ambient');
           }
         }
       } else {
-        if (currentMode === 'gemini-live') {
-          const base64Pcm = arrayBufferToBase64(pcm16.buffer);
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            const [srcLang, tgtLang] = langPairSelect.value.split('-');
-            socket.send(JSON.stringify({
-              type: 'audio',
-              pcm: base64Pcm,
-              sampleRate: 16000,
-              speakerRole: currentSpeakerRole,
-              sourceLang: currentSpeakerRole === 'cast-member' ? srcLang : tgtLang,
-              targetLang: currentSpeakerRole === 'cast-member' ? tgtLang : srcLang
-            }));
-          }
-        } else {
-          // Buffer audio for Gemini 3.5 Transcribe STT
-          recordedChunks.push(pcm16);
-        }
+        // Push to talk buffering
+        recordedChunks.push(pcm16);
       }
     };
 
@@ -495,7 +460,8 @@ async function startRecording() {
       const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
       activeBtn.classList.add('recording');
       lastSpeechStartTimestamp = Date.now();
-      setLiveStatus(`Listening to ${currentSpeakerRole === 'cast-member' ? 'Cast Member' : 'Guest'}...`, true);
+      const isCastMember = currentSpeakerRole === 'cast-member';
+      setLiveStatus(`Listening to ${isCastMember ? 'Cast Member (English)' : 'Guest (Spanish)'}...`, true);
       addMessageBubble(currentSpeakerRole, "🎤 Speaking...");
     }
   } catch (err) {
@@ -504,9 +470,9 @@ async function startRecording() {
   }
 }
 
-function dispatchContinuousUtterance() {
+function dispatchContinuousUtterance(role = currentSpeakerRole) {
   if (recordedChunks.length === 0) return;
-  setLiveStatus('⚡ Transcribing with Gemini 3.5 Transcribe...', true);
+  setLiveStatus('⚡ Transcribing & Translating...', true);
   
   let totalLength = 0;
   for (const chunk of recordedChunks) totalLength += chunk.length;
@@ -521,13 +487,15 @@ function dispatchContinuousUtterance() {
   const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
   if (socket && socket.readyState === WebSocket.OPEN) {
     const [srcLang, tgtLang] = langPairSelect.value.split('-');
+    const isGuest = role === 'guest';
+    
     socket.send(JSON.stringify({
       type: 'audio',
       pcm: base64Pcm,
       sampleRate: 16000,
-      speakerRole: 'ambient',
-      sourceLang: srcLang,
-      targetLang: tgtLang,
+      speakerRole: role,
+      sourceLang: isGuest ? tgtLang : srcLang,
+      targetLang: isGuest ? srcLang : tgtLang,
       useGlossary: true
     }));
   }
@@ -551,9 +519,9 @@ function stopRecording() {
     micStream = null;
   }
 
-  if (!isContinuous && currentMode === 'translation-pipeline' && recordedChunks.length > 0) {
-    setLiveStatus('Transcribing with Gemini 3.5 Transcribe...', true);
-    dispatchContinuousUtterance();
+  if (!isContinuous && recordedChunks.length > 0) {
+    setLiveStatus('Transcribing...', true);
+    dispatchContinuousUtterance(currentSpeakerRole);
   } else if (!isContinuous) {
     setLiveStatus('Processing...', true);
   }
@@ -616,7 +584,11 @@ function addMessageBubble(role, originalText) {
   const bubble = document.createElement('div');
   bubble.className = `message-bubble ${role}`;
   
-  const roleLabel = role === 'cast-member' ? '🇺🇸 Cast Member' : '🌐 Guest';
+  const roleLabel = role === 'cast-member' 
+    ? '🇺🇸 Cast Member (English)' 
+    : (role === 'guest' 
+        ? '🌐 Guest (Spanish)' 
+        : '🎙️ Live 2-Way Ambient');
   bubble.innerHTML = `
     <div class="message-meta">
       <span>${roleLabel}</span>
@@ -631,12 +603,19 @@ function addMessageBubble(role, originalText) {
   currentMessageBubble = bubble;
 }
 
-function updateSpeakerOriginalText(transcript, sttMs, sttModel) {
+function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-member') {
   if (!currentMessageBubble) return;
   const textEl = currentMessageBubble.querySelector('.message-text');
+  const metaEl = currentMessageBubble.querySelector('.message-meta span:first-child');
+  
+  if (metaEl && role) {
+    metaEl.innerText = role === 'cast-member' ? '🇺🇸 Cast Member (English)' : '🌐 Guest (Spanish)';
+    currentMessageBubble.className = `message-bubble ${role}`;
+  }
+
   if (textEl) {
-    const modelBadge = sttModel ? ` <span class="badge-mini">⚡ ${sttModel} (${Math.round(sttMs || 0)}ms)</span>` : (sttMs ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '');
-    textEl.innerHTML = `"${transcript}"${modelBadge}`;
+    const latencyBadge = sttMs ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '';
+    textEl.innerHTML = `"${transcript}"${latencyBadge}`;
   }
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
@@ -652,21 +631,43 @@ function updateMessageTranslation(translatedText, glossaryApplied, transMs) {
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
-// Glossary Setup
+// Disney Protected Brand Glossary Setup
 async function setupGlossary() {
+  const fallbackTerms = [
+    { term_id: "lightning_lane", en: "Lightning Lane", category: "Service", keep_original: true, translations: { es: "Lightning Lane", pt: "Lightning Lane", fr: "Lightning Lane" }, notes: "Disney express queue service. Do not translate literally." },
+    { term_id: "magicband_plus", en: "MagicBand+", category: "Merchandise/Service", keep_original: true, translations: { es: "MagicBand+", pt: "MagicBand+", fr: "MagicBand+" }, notes: "Wearable RFID/Bluetooth park device." },
+    { term_id: "cast_member", en: "Cast Member", category: "Personnel", keep_original: false, translations: { es: "Miembro del Elenco", pt: "Membro do Elenco", fr: "Cast Member / Membre de l'équipe" }, notes: "Disney employee title." },
+    { term_id: "space_mountain", en: "Space Mountain", category: "Attraction", keep_original: true, translations: { es: "Space Mountain", pt: "Space Mountain" }, notes: "Tomorrowland indoor roller coaster." },
+    { term_id: "rise_of_the_resistance", en: "Star Wars: Rise of the Resistance", category: "Attraction", keep_original: true, translations: { es: "Star Wars: Rise of the Resistance" }, notes: "Galaxy's Edge dark ride." },
+    { term_id: "haunted_mansion", en: "Haunted Mansion", category: "Attraction", keep_original: true, translations: { es: "Haunted Mansion" }, notes: "Liberty Square / New Orleans Square attraction." },
+    { term_id: "rope_drop", en: "Rope Drop", category: "Park Concept", keep_original: false, translations: { es: "Apertura del parque / Entrada a primera hora" }, notes: "Park opening ceremony." },
+    { term_id: "photopass", en: "Disney PhotoPass", category: "Service", keep_original: true, translations: { es: "Disney PhotoPass" }, notes: "Professional in-park photography service." },
+    { term_id: "rider_switch", en: "Rider Switch", category: "Service", keep_original: false, translations: { es: "Intercambio de Pasajeros / Rider Switch" }, notes: "Child swap service for attractions." },
+    { term_id: "single_rider", en: "Single Rider", category: "Queue Concept", keep_original: false, translations: { es: "Fila de Pasajero Individual / Single Rider" }, notes: "Dedicated queue for solo riders." },
+    { term_id: "tianas_bayou_adventure", en: "Tiana's Bayou Adventure", category: "Attraction", keep_original: true, translations: { es: "Tiana's Bayou Adventure" }, notes: "Critter Country attraction." },
+    { term_id: "big_thunder_mountain", en: "Big Thunder Mountain Railroad", category: "Attraction", keep_original: true, translations: { es: "Big Thunder Mountain Railroad" }, notes: "Frontierland coaster." }
+  ];
+
   try {
     const res = await fetch('/api/glossary');
-    const data = await res.json();
-    glossaryData = data.terms || [];
-    renderGlossary(glossaryData);
+    if (res.ok) {
+      const data = await res.json();
+      glossaryData = (data.terms && data.terms.length > 0) ? data.terms : fallbackTerms;
+    } else {
+      glossaryData = fallbackTerms;
+    }
   } catch (e) {
-    console.warn('Could not fetch glossary from API, using defaults');
+    console.warn('Could not fetch glossary from API, using default list');
+    glossaryData = fallbackTerms;
   }
+
+  renderGlossary(glossaryData);
 
   glossarySearch.addEventListener('input', (e) => {
     const query = e.target.value.toLowerCase();
     const filtered = glossaryData.filter(t => 
       t.en.toLowerCase().includes(query) || 
+      (t.category && t.category.toLowerCase().includes(query)) ||
       (t.translations && Object.values(t.translations).some(v => v.toLowerCase().includes(query)))
     );
     renderGlossary(filtered);
@@ -682,10 +683,10 @@ function renderGlossary(terms) {
     card.innerHTML = `
       <div class="glossary-card-header">
         <span class="term-en">${t.en}</span>
-        <span class="term-category">${t.category}</span>
+        <span class="term-category">${t.category || 'Disney Term'}</span>
       </div>
       <div class="term-target">➔ ${es}</div>
-      <div class="term-notes">${t.keep_original ? '🔒 Preserve English Brand' : '🔄 Standard Translation'} • ${t.notes || ''}</div>
+      <div class="term-notes">${t.keep_original ? '🔒 Preserve English Brand' : '🔄 Contextual Translation'} • ${t.notes || ''}</div>
     `;
     glossaryGrid.appendChild(card);
   });

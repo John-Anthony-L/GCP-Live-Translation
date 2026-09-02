@@ -128,10 +128,42 @@ async def websocket_endpoint(websocket: WebSocket):
             if data.get("type") == "audio" and "pcm" in data:
                 pcm_bytes = base64.b64decode(data["pcm"])
                 
+                # Determine language config based on speaker role
+                if speaker_role == "guest":
+                    stt_lang = f"{tgt}-US" if tgt in ["en", "es"] else f"{tgt}-{tgt.upper()}"
+                    src_lang = tgt
+                    tgt_lang = src
+                    alt_langs = None
+                elif speaker_role == "ambient":
+                    # Continuous Mode: Detect whether English or Target Language was spoken
+                    stt_lang = "en-US"
+                    target_stt = f"{tgt}-US" if tgt in ["es"] else f"{tgt}-{tgt.upper()}"
+                    alt_langs = [target_stt]
+                    src_lang = src
+                    tgt_lang = tgt
+                else: # Cast Member
+                    stt_lang = f"{src}-US" if src in ["en", "es"] else f"{src}-{src.upper()}"
+                    src_lang = src
+                    tgt_lang = tgt
+                    alt_langs = None
+
                 # 1. Real-time STT with Gemini 3.5 Transcribe
-                stt_lang = f"{src}-US" if src in ["en", "es"] else f"{src}-{src.upper()}"
-                stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang)
+                stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang, alternative_lang_codes=alt_langs)
                 
+                # If ambient continuous mode, adapt direction dynamically
+                if speaker_role == "ambient":
+                    detected = stt_res.get("detected_lang", "en-US")
+                    if detected.lower().startswith(tgt.lower()):
+                        src_lang = tgt
+                        tgt_lang = src
+                        effective_role = "guest"
+                    else:
+                        src_lang = src
+                        tgt_lang = tgt
+                        effective_role = "cast-member"
+                else:
+                    effective_role = speaker_role
+
                 # Push STT transcript immediately to client
                 await websocket.send_json({
                     "type": "stt_transcript",
@@ -139,7 +171,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     "confidence": stt_res["confidence"],
                     "stt_ms": stt_res["latency_ms"],
                     "stt_model": stt_res.get("stt_model", "gemini-3.5-transcribe"),
-                    "speakerRole": speaker_role
+                    "speakerRole": effective_role,
+                    "detectedLang": stt_res.get("detected_lang")
                 })
 
                 if not stt_res["transcript"]:
@@ -149,8 +182,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 2. Real-time Translation with Translation LLM
                 mt_res = pipeline.translate_text(
                     stt_res["transcript"],
-                    source_lang=src,
-                    target_lang=tgt,
+                    source_lang=src_lang,
+                    target_lang=tgt_lang,
                     use_glossary=use_glossary
                 )
 
@@ -160,11 +193,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     "translated_text": mt_res["translated_text"],
                     "glossary_applied": mt_res["glossary_applied"],
                     "translation_ms": mt_res["latency_ms"],
-                    "model": mt_res["model"]
+                    "model": mt_res["model"],
+                    "speakerRole": effective_role
                 })
 
                 # 3. High Fidelity Speech Synthesis
-                tts_lang_code = f"{tgt}-US" if tgt == "es" else f"{tgt}-{tgt.upper()}"
+                tts_lang_code = f"{tgt_lang}-US" if tgt_lang in ["en", "es"] else f"{tgt_lang}-{tgt_lang.upper()}"
                 tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
                 
                 total_latency = round(stt_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
@@ -179,7 +213,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "stt_ms": stt_res["latency_ms"],
                         "translation_ms": mt_res["latency_ms"],
                         "tts_ms": tts_res["latency_ms"]
-                    }
+                    },
+                    "speakerRole": effective_role
                 })
 
             elif data.get("type") == "text" and "text" in data:

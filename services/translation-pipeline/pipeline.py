@@ -54,7 +54,7 @@ class DisneyTranslationPipeline:
             boost=20.0
         )
 
-    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", model: str = None) -> Dict[str, Any]:
+    def transcribe_audio(self, pcm_data: bytes, sample_rate: int = 16000, lang_code: str = "en-US", alternative_lang_codes: List[str] = None, model: str = None) -> Dict[str, Any]:
         start_time = time.time()
         
         # 1. Fast silence trimming to cut payload and model inference time
@@ -65,14 +65,18 @@ class DisneyTranslationPipeline:
         if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
             stt_model = "latest_short"
 
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            sample_rate_hertz=sample_rate,
-            language_code=lang_code,
-            speech_contexts=[self.cached_speech_context],
-            enable_automatic_punctuation=True,
-            model=stt_model
-        )
+        config_kwargs = {
+            "encoding": speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            "sample_rate_hertz": sample_rate,
+            "language_code": lang_code,
+            "speech_contexts": [self.cached_speech_context],
+            "enable_automatic_punctuation": True,
+            "model": stt_model
+        }
+        if alternative_lang_codes:
+            config_kwargs["alternative_language_codes"] = alternative_lang_codes
+
+        config = speech.RecognitionConfig(**config_kwargs)
         
         audio = speech.RecognitionAudio(content=trimmed_pcm)
         response = self.speech_client.recognize(config=config, audio=audio)
@@ -81,16 +85,20 @@ class DisneyTranslationPipeline:
         
         transcript = ""
         confidence = 0.0
+        detected_lang = lang_code
         if response.results:
             result = response.results[0]
+            if hasattr(result, 'language_code') and result.language_code:
+                detected_lang = result.language_code
             if result.alternatives:
                 transcript = result.alternatives[0].transcript
                 confidence = result.alternatives[0].confidence
 
         return {
             "transcript": transcript,
-            "confidence": confidence,
+            "confidence": round(confidence, 3),
             "stt_model": stt_model,
+            "detected_lang": detected_lang,
             "latency_ms": round(duration_ms, 2)
         }
 

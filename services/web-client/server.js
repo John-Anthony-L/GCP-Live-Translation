@@ -13,6 +13,17 @@ app.get('/config.json', (req, res) => {
   });
 });
 
+// Disney Glossary API endpoint
+app.get('/api/glossary', (req, res) => {
+  try {
+    const glossaryPath = path.join(__dirname, 'disney_parks_glossary.json');
+    const glossary = require(glossaryPath);
+    res.json(glossary);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load Disney glossary', message: err.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
