@@ -61,6 +61,10 @@ class DisneyTranslationPipeline:
         if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
             stt_model = "latest_short"
 
+        # Use default model when multi-language auto detection is active in streaming
+        if alternative_lang_codes:
+            stt_model = "default"
+
         config_kwargs = {
             "encoding": speech.RecognitionConfig.AudioEncoding.LINEAR16,
             "sample_rate_hertz": 16000,

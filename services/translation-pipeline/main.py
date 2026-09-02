@@ -42,11 +42,16 @@ class StreamingSTTWorker:
     async def stop(self):
         self.is_running = False
         await self.queue.put(None)
-        if self.task:
-            self.task.cancel()
+        if self.task and not self.task.done():
+            try:
+                # Wait up to 3.5 seconds for final speech results to be delivered
+                await asyncio.wait_for(asyncio.shield(self.task), timeout=3.5)
+            except Exception:
+                if not self.task.done():
+                    self.task.cancel()
 
     async def _generator(self):
-        while self.is_running:
+        while True:
             chunk = await self.queue.get()
             if chunk is None:
                 break
@@ -82,6 +87,9 @@ class StreamingSTTWorker:
                     continue
                 
                 transcript = result.alternatives[0].transcript
+                if not transcript or not transcript.strip():
+                    continue
+
                 is_final = result.is_final
                 detected = getattr(result, 'language_code', stt_lang)
 
@@ -160,7 +168,9 @@ class StreamingSTTWorker:
         except asyncio.CancelledError:
             pass
         except Exception as err:
-            print(f"[StreamingSTT] Worker stream error: {err}")
+            import traceback
+            print(f"[StreamingSTT] Worker stream error: {err}", flush=True)
+            traceback.print_exc()
 
 class TextTranslateRequest(BaseModel):
     text: str

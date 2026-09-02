@@ -14,7 +14,7 @@ let glossaryData = [];
 let recordedChunks = [];
 let vadSpeaking = false;
 let vadSilenceStart = 0;
-const VAD_ENERGY_THRESHOLD = 0.015; // Sensitive voice activity threshold
+const VAD_ENERGY_THRESHOLD = 0.010; // Sensitive voice activity threshold
 const VAD_SILENCE_TIMEOUT_MS = 750; // 750ms silence automatically dispatches speech turn
 
 // DOM Elements
@@ -475,16 +475,6 @@ async function startRecording() {
           } else {
             vadSilenceStart = 0;
           }
-
-          // Stream audio chunk in real-time
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            const base64Chunk = arrayBufferToBase64(pcm16.buffer);
-            socket.send(JSON.stringify({
-              type: 'audio_chunk',
-              pcm: base64Chunk,
-              speakerRole: 'ambient'
-            }));
-          }
         } else if (vadSpeaking) {
           if (vadSilenceStart === 0) {
             vadSilenceStart = Date.now();
@@ -498,6 +488,16 @@ async function startRecording() {
               }));
             }
           }
+        }
+
+        // Stream audio chunk continuously while voice is active (including inter-word pauses)
+        if (vadSpeaking && socket && socket.readyState === WebSocket.OPEN) {
+          const base64Chunk = arrayBufferToBase64(pcm16.buffer);
+          socket.send(JSON.stringify({
+            type: 'audio_chunk',
+            pcm: base64Chunk,
+            speakerRole: 'ambient'
+          }));
         }
       } else {
         // Push to talk buffering
