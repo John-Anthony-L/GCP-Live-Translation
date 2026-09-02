@@ -172,6 +172,10 @@ export class VertexBidiClient {
     this.ws.send(JSON.stringify(payload));
   }
 
+  public isOpen(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
   public close(): void {
     if (this.ws) {
       this.ws.close();

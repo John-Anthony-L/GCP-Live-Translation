@@ -1,5 +1,5 @@
 // Disney Parks 2-Way Live Translation Client
-let currentMode = 'gemini-live'; // 'gemini-live' | 'translation-pipeline'
+let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'gemini-live'
 let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest'
 let isRecording = false;
 let isContinuous = false;
