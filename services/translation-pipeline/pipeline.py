@@ -1,6 +1,7 @@
 import os
 import time
 import base64
+import html
 from typing import Dict, Any, List
 from google.cloud import speech_v1p1beta1 as speech
 from google.cloud import translate_v3 as translate
@@ -147,6 +148,9 @@ class DisneyTranslationPipeline:
             translated_text = response.translations[0].translated_text
             used_model = getattr(response.translations[0], "model", model_path)
 
+        # Unescape HTML entities (e.g. &#39; -> ' , &quot; -> ") so TTS doesn't read entity names phonetically
+        translated_text = html.unescape(translated_text)
+
         return {
             "translated_text": translated_text,
             "glossary_applied": glossary_applied,
@@ -157,7 +161,8 @@ class DisneyTranslationPipeline:
     def synthesize_speech(self, text: str, target_lang: str = "es-US") -> Dict[str, Any]:
         start_time = time.time()
         
-        synthesis_input = texttospeech.SynthesisInput(text=text)
+        clean_text = html.unescape(text)
+        synthesis_input = texttospeech.SynthesisInput(text=clean_text)
         
         # Select natural Neural2 or Journey voice
         voice_params = texttospeech.VoiceSelectionParams(
