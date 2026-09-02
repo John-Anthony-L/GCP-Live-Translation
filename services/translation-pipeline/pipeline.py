@@ -4,6 +4,7 @@ import base64
 import html
 from typing import Dict, Any, List
 from google.cloud import speech_v1p1beta1 as speech
+from google.cloud import speech_v2
 from google.cloud import translate_v3 as translate
 from google.cloud import texttospeech_v1 as texttospeech
 from glossary_helper import get_glossary_config
@@ -43,8 +44,14 @@ class DisneyTranslationPipeline:
     def __init__(self):
         self.speech_client = speech.SpeechClient()
         self.speech_async_client = speech.SpeechAsyncClient()
+        self.speech_v2_client = speech_v2.SpeechClient()
+        self.speech_v2_async_client = speech_v2.SpeechAsyncClient()
         self.translate_client = translate.TranslationServiceClient()
         self.tts_client = texttospeech.TextToSpeechClient()
+        
+        self.chirp2_en_recognizer = f"projects/{PROJECT_ID}/locations/{LOCATION}/recognizers/disney-live-recognizer"
+        self.chirp2_es_recognizer = f"projects/{PROJECT_ID}/locations/{LOCATION}/recognizers/disney-live-recognizer-es"
+        
         self.disney_phrases = [
             "Lightning Lane", "MagicBand+", "Cast Member", "Space Mountain",
             "Rise of the Resistance", "Haunted Mansion", "Big Thunder Mountain",
@@ -130,6 +137,38 @@ class DisneyTranslationPipeline:
             "detected_lang": detected_lang,
             "latency_ms": round(duration_ms, 2)
         }
+
+    def transcribe_chirp2(self, pcm_data: bytes, lang_code: str = "en-US") -> Dict[str, Any]:
+        start_time = time.time()
+        recognizer = self.chirp2_es_recognizer if "es" in lang_code.lower() else self.chirp2_en_recognizer
+        trimmed_pcm = trim_pcm_silence(pcm_data)
+        
+        request = speech_v2.RecognizeRequest(
+            recognizer=recognizer,
+            content=trimmed_pcm,
+        )
+        try:
+            response = self.speech_v2_client.recognize(request=request)
+            duration_ms = (time.time() - start_time) * 1000
+            
+            transcript = ""
+            confidence = 0.0
+            if response.results:
+                result = response.results[0]
+                if result.alternatives:
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence
+                    
+            return {
+                "transcript": transcript,
+                "confidence": round(confidence, 3),
+                "stt_model": "chirp_2 (Gemini Speech Generation)",
+                "detected_lang": lang_code,
+                "latency_ms": round(duration_ms, 2)
+            }
+        except Exception as e:
+            print(f"[Pipeline] Chirp2 error: {e}, falling back to latest_short", flush=True)
+            return self.transcribe_audio(pcm_data, lang_code=lang_code)
 
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "es", use_glossary: bool = True, model: str = None) -> Dict[str, Any]:
         start_time = time.time()

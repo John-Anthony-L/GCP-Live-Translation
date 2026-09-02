@@ -340,8 +340,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     tgt_lang = tgt
                     alt_langs = None
 
-                # 1. Real-time STT with Gemini 3.5 Transcribe
-                stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang, alternative_lang_codes=alt_langs)
+                req_model = data.get("sttModel") or os.getenv("STT_MODEL", "latest_short")
+                # 1. Real-time STT with Chirp 2 (Gemini Speech Generation) or latest_short
+                if req_model == "chirp_2" and not alt_langs:
+                    stt_res = pipeline.transcribe_chirp2(pcm_bytes, lang_code=stt_lang)
+                else:
+                    stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang, alternative_lang_codes=alt_langs)
                 
                 # If ambient continuous mode, adapt direction dynamically
                 if speaker_role == "ambient":
