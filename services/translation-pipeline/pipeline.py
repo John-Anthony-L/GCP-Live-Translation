@@ -96,10 +96,8 @@ class DisneyTranslationPipeline:
         # 1. Fast silence trimming to cut payload and model inference time
         trimmed_pcm = trim_pcm_silence(pcm_data)
         
-        # 2. Select optimized low-latency model (latest_short is tuned by Google for fast conversational speech)
-        stt_model = model or os.getenv("STT_MODEL", "latest_short")
-        if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
-            stt_model = "latest_short"
+        stt_model = model or os.getenv("STT_MODEL", "gemini-3.5-transcribe-live-preview")
+        speech_model = "latest_short" if "gemini" in stt_model.lower() or "chirp" in stt_model.lower() else stt_model
 
         config_kwargs = {
             "encoding": speech.RecognitionConfig.AudioEncoding.LINEAR16,
@@ -107,7 +105,7 @@ class DisneyTranslationPipeline:
             "language_code": lang_code,
             "speech_contexts": [self.cached_speech_context],
             "enable_automatic_punctuation": True,
-            "model": stt_model
+            "model": speech_model
         }
         if alternative_lang_codes:
             config_kwargs["alternative_language_codes"] = alternative_lang_codes
