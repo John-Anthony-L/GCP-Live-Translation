@@ -119,22 +119,31 @@ class DisneyTranslationPipeline:
 
         if use_glossary:
             try:
-                request.glossary_config = get_glossary_config(source_lang, target_lang)
+                g_cfg = get_glossary_config(source_lang, target_lang)
+                if g_cfg:
+                    request.glossary_config = g_cfg
             except Exception as e:
                 print(f"[Pipeline] Glossary config error (skipping glossary): {e}")
 
-        response = self.translate_client.translate_text(request=request)
+        response = None
+        try:
+            response = self.translate_client.translate_text(request=request)
+        except Exception as err:
+            print(f"[Pipeline] Translation with glossary failed ({err}), retrying without glossary...")
+            request.glossary_config = None
+            response = self.translate_client.translate_text(request=request)
+
         duration_ms = (time.time() - start_time) * 1000
 
         translated_text = ""
         glossary_applied = False
         used_model = model_path
 
-        if response.glossary_translations:
+        if response and response.glossary_translations:
             translated_text = response.glossary_translations[0].translated_text
             glossary_applied = True
             used_model = getattr(response.glossary_translations[0], "model", model_path)
-        elif response.translations:
+        elif response and response.translations:
             translated_text = response.translations[0].translated_text
             used_model = getattr(response.translations[0], "model", model_path)
 

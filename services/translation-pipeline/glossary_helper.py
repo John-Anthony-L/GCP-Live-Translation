@@ -60,7 +60,19 @@ def create_translation_api_glossary(gcs_uri: str, source_lang="en", target_lang=
 
 def get_glossary_config(source_lang="en", target_lang="es"):
     """Returns the translate_v3.TranslateTextGlossaryConfig if available."""
-    glossary_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/glossaries/{GLOSSARY_ID}"
+    src = source_lang.lower().split("-")[0]
+    tgt = target_lang.lower().split("-")[0]
+
+    glossary_id = None
+    if src == "en" and tgt == "es":
+        glossary_id = "disney-parks-glossary-en-es"
+    elif src == "es" and tgt == "en":
+        glossary_id = "disney-parks-glossary-es-en"
+
+    if not glossary_id:
+        return None
+
+    glossary_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/glossaries/{glossary_id}"
     return translate.TranslateTextGlossaryConfig(
         glossary=glossary_name,
         ignore_case=True
