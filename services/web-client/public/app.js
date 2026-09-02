@@ -244,24 +244,30 @@ function handleSendText() {
 async function connectWebSocket() {
   updateStatus('connecting', 'Connecting...');
   
+  const host = window.location.hostname;
+  const isLocal = host === 'localhost' || host === '127.0.0.1';
   let wsUrl = '';
-  try {
-    const configRes = await fetch('/config.json');
-    if (configRes.ok) {
-      const config = await configRes.json();
-      if (config.translationPipelineWsUrl) {
-        wsUrl = config.translationPipelineWsUrl;
-      }
-    }
-  } catch (e) {
-    console.log('[Config] Using location-based WebSocket routing');
-  }
 
-  if (!wsUrl) {
-    const host = window.location.hostname;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const port = window.location.port === '3000' ? '8092' : window.location.port;
-    wsUrl = `${protocol}//${host}${port ? ':' + port : ''}/ws/stream-translate`;
+  if (isLocal) {
+    // In local development, use authenticated local proxy on port 8092
+    wsUrl = `ws://${host}:8092/ws/stream-translate`;
+  } else {
+    try {
+      const configRes = await fetch('/config.json');
+      if (configRes.ok) {
+        const config = await configRes.json();
+        if (config.translationPipelineWsUrl) {
+          wsUrl = config.translationPipelineWsUrl;
+        }
+      }
+    } catch (e) {
+      console.log('[Config] Using location-based WebSocket routing');
+    }
+
+    if (!wsUrl) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${host}/ws/stream-translate`;
+    }
   }
 
   console.log(`[WS] Connecting to ${wsUrl}`);
