@@ -775,3 +775,152 @@ input[type="checkbox"]:checked + .toggle-slider::before {
   color: #ffd54f;
   border: 1px solid rgba(255, 215, 0, 0.3);
 }
+
+/* Live Running Pipeline Telemetry & Debugger Card */
+.pipeline-terminal-card {
+  margin-top: 20px;
+  background: #0b111e;
+  border: 1px solid rgba(0, 114, 210, 0.4);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.terminal-header {
+  background: #101a2d;
+  padding: 8px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #90caf9;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+}
+
+.terminal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.terminal-dot.green { background: #2ecc71; }
+.terminal-dot.yellow { background: #f1c40f; }
+.terminal-dot.red { background: #e74c3c; }
+
+.terminal-status-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  font-weight: 600;
+  border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.terminal-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.78rem;
+}
+
+.terminal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border-left: 3px solid rgba(0, 114, 210, 0.6);
+}
+
+.terminal-label {
+  width: 130px;
+  font-weight: 700;
+  color: #90caf9;
+  flex-shrink: 0;
+}
+
+.terminal-meter-wrap {
+  flex: 1;
+  max-width: 180px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.terminal-meter-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+  transition: width 0.05s ease-out;
+}
+
+.terminal-val {
+  font-size: 0.72rem;
+  color: #a0aec0;
+  min-width: 120px;
+}
+
+.terminal-text {
+  flex: 1;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-text.highlight-stt {
+  color: #64b5f6;
+  font-weight: 600;
+}
+
+.terminal-text.highlight-mt {
+  color: #ffd54f;
+  font-weight: 600;
+}
+
+.terminal-text.highlight-tts {
+  color: #81c784;
+  font-weight: 600;
+}
+
+.terminal-meta {
+  font-size: 0.7rem;
+  color: #8892b0;
+  flex-shrink: 0;
+}
+
+.terminal-log-stream {
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 90px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: #a0aec0;
+}
+
+.terminal-log-stream .log-line {
+  line-height: 1.35;
+}
+.terminal-log-stream .log-stt { color: #64b5f6; }
+.terminal-log-stream .log-mt { color: #ffd54f; }
+.terminal-log-stream .log-tts { color: #81c784; }
+.terminal-log-stream .log-err { color: #e57373; }
+

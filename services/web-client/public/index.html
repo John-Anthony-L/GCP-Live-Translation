@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Disney Parks 2-Way Live Translation | Argolis GCP</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -198,6 +198,56 @@
           <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'Where is Lightning Lane?')">
           <button id="sendTextBtn" class="send-btn">Send & Speak</button>
         </div>
+
+        <!-- Live Running Pipeline Telemetry & Transcript Terminal -->
+        <div class="pipeline-terminal-card" id="pipelineTerminalCard">
+          <div class="terminal-header">
+            <div class="terminal-title">
+              <span class="terminal-dot green"></span>
+              <span class="terminal-dot yellow"></span>
+              <span class="terminal-dot red"></span>
+              <span>⚡ LIVE PIPELINE TELEMETRY & RUNNING TRANSCRIPT</span>
+            </div>
+            <span class="terminal-status-badge" id="terminalMicState">🎙️ Mic Ready</span>
+          </div>
+
+          <div class="terminal-body">
+            <!-- Audio Input VAD Meter -->
+            <div class="terminal-row">
+              <span class="terminal-label">🎙️ Mic Input:</span>
+              <div class="terminal-meter-wrap">
+                <div class="terminal-meter-bar" id="terminalRmsBar" style="width: 0%;"></div>
+              </div>
+              <span class="terminal-val" id="terminalRmsText">0.000 RMS (Idle)</span>
+            </div>
+
+            <!-- Live Speech STT Detected -->
+            <div class="terminal-row">
+              <span class="terminal-label">🗣️ STT Capture:</span>
+              <span class="terminal-text highlight-stt" id="terminalSttText">Waiting for spoken audio...</span>
+              <span class="terminal-meta" id="terminalSttMeta">--</span>
+            </div>
+
+            <!-- Translation LLM Output -->
+            <div class="terminal-row">
+              <span class="terminal-label">🌐 Translation LLM:</span>
+              <span class="terminal-text highlight-mt" id="terminalMtText">Waiting for STT...</span>
+              <span class="terminal-meta" id="terminalMtMeta">--</span>
+            </div>
+
+            <!-- TTS Audio Playback -->
+            <div class="terminal-row">
+              <span class="terminal-label">🔊 TTS Speech:</span>
+              <span class="terminal-text highlight-tts" id="terminalTtsText">Waiting for translation...</span>
+              <span class="terminal-meta" id="terminalTtsMeta">--</span>
+            </div>
+
+            <!-- Live Event Log Stream -->
+            <div class="terminal-log-stream" id="terminalLogStream">
+              <div class="log-line">[SYSTEM] Testbed initialized. Ready to capture and translate English ↔ Spanish live.</div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- Section 3: Disney Glossary Reference -->
@@ -222,6 +272,6 @@
     </footer>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

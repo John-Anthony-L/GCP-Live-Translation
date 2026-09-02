@@ -45,6 +45,28 @@ const sendTextBtn = document.getElementById('sendTextBtn');
 const glossaryGrid = document.getElementById('glossaryGrid');
 const glossarySearch = document.getElementById('glossarySearch');
 
+// Live Pipeline Telemetry Terminal Elements
+const terminalMicState = document.getElementById('terminalMicState');
+const terminalRmsBar = document.getElementById('terminalRmsBar');
+const terminalRmsText = document.getElementById('terminalRmsText');
+const terminalSttText = document.getElementById('terminalSttText');
+const terminalSttMeta = document.getElementById('terminalSttMeta');
+const terminalMtText = document.getElementById('terminalMtText');
+const terminalMtMeta = document.getElementById('terminalMtMeta');
+const terminalTtsText = document.getElementById('terminalTtsText');
+const terminalTtsMeta = document.getElementById('terminalTtsMeta');
+const terminalLogStream = document.getElementById('terminalLogStream');
+
+function addTerminalLog(msg, type = '') {
+  if (!terminalLogStream) return;
+  const now = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.className = `log-line ${type ? 'log-' + type : ''}`;
+  line.innerText = `[${now}] ${msg}`;
+  terminalLogStream.appendChild(line);
+  terminalLogStream.scrollTop = terminalLogStream.scrollHeight;
+}
+
 // Initialize
 async function init() {
   setupTabs();
@@ -301,7 +323,7 @@ async function connectWebSocket() {
           }
         }
       } else if (data.type === 'stt_transcript') {
-        console.log('[WS] STT Transcript (Sentence boundary):', data);
+        console.log('[WS] STT Transcript:', data);
         const role = data.speakerRole || currentSpeakerRole;
         if (!currentMessageBubble) {
           addMessageBubble(role, data.transcript);
@@ -310,13 +332,25 @@ async function connectWebSocket() {
         if (sttLatencyVal && data.stt_ms !== undefined) {
           sttLatencyVal.innerText = Math.round(data.stt_ms);
         }
-        setLiveStatus('Translating sentence...', true);
+        if (terminalSttText) {
+          terminalSttText.innerText = data.transcript ? `"${data.transcript}"` : '(No speech detected)';
+          terminalSttMeta.innerText = `${data.detectedLang || 'en-US'} • ${Math.round(data.stt_ms || 0)}ms`;
+        }
+        if (data.transcript) {
+          addTerminalLog(`STT Captured: "${data.transcript}" (${data.detectedLang || 'en-US'}, ${Math.round(data.stt_ms || 0)}ms)`, 'stt');
+        }
+        setLiveStatus('Translating with Translation LLM...', true);
       } else if (data.type === 'translation_text') {
         console.log('[WS] Translation Text:', data);
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
         if (transLatencyVal && data.translation_ms !== undefined) {
           transLatencyVal.innerText = Math.round(data.translation_ms);
         }
+        if (terminalMtText) {
+          terminalMtText.innerText = `"${data.translated_text}"`;
+          terminalMtMeta.innerText = `${data.glossary_applied ? '🏰 Glossary Enforced' : 'Direct LLM'} • ${Math.round(data.translation_ms || 0)}ms`;
+        }
+        addTerminalLog(`Translation: "${data.translated_text}" (${data.glossary_applied ? 'Disney Glossary Enforced' : 'Direct LLM'}, ${Math.round(data.translation_ms || 0)}ms)`, 'mt');
         setLiveStatus('Generating Neural Speech...', true);
       } else if (data.type === 'audio' && data.pcm) {
         if (data.total_latency_ms && data.total_latency_ms > 0) {
@@ -337,9 +371,18 @@ async function connectWebSocket() {
           }
         }
 
+        if (terminalTtsText) {
+          terminalTtsText.innerText = `🔊 Synthesized ${Math.round(data.pcm.length / 1024)} KB audio`;
+          terminalTtsMeta.innerText = `Total: ${Math.round(data.total_latency_ms || 0)}ms`;
+        }
+        if (terminalMicState) {
+          terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Ready';
+          terminalMicState.style.color = '#2ecc71';
+        }
+        addTerminalLog(`TTS Audio ready -> Playing through FIFO Audio Queue (Total E2E: ${Math.round(data.total_latency_ms || 0)}ms)`, 'tts');
+
         setLiveStatus('Playing Translation Speech...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
-        // In continuous mode, prepare next bubble for subsequent sentences
         if (isContinuous) {
           currentMessageBubble = null;
         }
@@ -347,6 +390,15 @@ async function connectWebSocket() {
         updateMessageTranslation(data.text);
       } else if (data.type === 'no_speech') {
         setLiveStatus(isContinuous ? '🎙️ Ambient Mic Active (Listening...)' : 'Ready', isContinuous);
+        if (terminalSttText) {
+          terminalSttText.innerText = '(No audible speech detected - speak closer to mic)';
+          terminalSttMeta.innerText = '--';
+        }
+        if (terminalMicState) {
+          terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Ready';
+          terminalMicState.style.color = '#2ecc71';
+        }
+        addTerminalLog('No audible speech detected in audio turn.', 'err');
         if (currentMessageBubble) {
           const textEl = currentMessageBubble.querySelector('.message-text');
           if (textEl && textEl.innerText.includes('Speaking')) {
@@ -369,6 +421,7 @@ async function connectWebSocket() {
         console.error('[WS] Server error:', data.message);
         setLiveStatus(`Error: ${data.message}`, false);
         updateStatus('disconnected', 'Service Error');
+        addTerminalLog(`Pipeline Error: ${data.message}`, 'err');
       }
     };
 
@@ -453,51 +506,54 @@ async function startRecording() {
       }
       const rms = Math.sqrt(sum / inputData.length);
 
+      // Update live RMS audio meter in telemetry terminal
+      if (terminalRmsBar) {
+        const pct = Math.min(100, Math.round(rms * 2500));
+        terminalRmsBar.style.width = `${pct}%`;
+      }
+      if (terminalRmsText) {
+        terminalRmsText.innerText = `${rms.toFixed(4)} RMS ${vadSpeaking ? '🎙️ (Speaking)' : '(Listening)'}`;
+      }
+      if (rms > 0.002) {
+        audioPulse.classList.add('active');
+      } else if (!vadSpeaking) {
+        audioPulse.classList.remove('active');
+      }
+
       if (isContinuous) {
         if (rms > VAD_ENERGY_THRESHOLD) {
           if (!vadSpeaking) {
             vadSpeaking = true;
             vadSilenceStart = 0;
+            recordedChunks = [];
+            lastSpeechStartTimestamp = Date.now();
             console.log('[VAD] Speech started! RMS:', rms.toFixed(4));
             setLiveStatus('🎙️ Voice detected (Listening...)', true);
-            lastSpeechStartTimestamp = Date.now();
-            addMessageBubble('ambient', '🎤 Listening...');
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              const [srcLang, tgtLang] = langPairSelect.value.split('-');
-              socket.send(JSON.stringify({
-                type: 'audio_stream_start',
-                speakerRole: 'ambient',
-                sourceLang: srcLang,
-                targetLang: tgtLang,
-                useGlossary: true
-              }));
+            if (terminalMicState) {
+              terminalMicState.innerText = '🔴 Recording Turn...';
+              terminalMicState.style.color = '#e74c3c';
             }
+            addTerminalLog(`Speech detected (RMS: ${rms.toFixed(4)}) - Buffering turn...`, 'stt');
+            addMessageBubble('ambient', '🎤 Listening...');
           } else {
             vadSilenceStart = 0;
           }
+          recordedChunks.push(pcm16);
         } else if (vadSpeaking) {
+          recordedChunks.push(pcm16);
           if (vadSilenceStart === 0) {
             vadSilenceStart = Date.now();
           } else if (Date.now() - vadSilenceStart > VAD_SILENCE_TIMEOUT_MS) {
             console.log('[VAD] Speech pause detected');
             vadSpeaking = false;
             vadSilenceStart = 0;
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({
-                type: 'audio_stream_end'
-              }));
+            if (terminalMicState) {
+              terminalMicState.innerText = '⚡ Processing Turn...';
+              terminalMicState.style.color = '#f1c40f';
             }
+            addTerminalLog('Speech pause detected -> Dispatched audio turn to STT & Translation Pipeline', 'stt');
+            dispatchContinuousUtterance('ambient');
           }
-        }
-
-        // Stream audio chunk continuously while voice is active (including inter-word pauses)
-        if (vadSpeaking && socket && socket.readyState === WebSocket.OPEN) {
-          const base64Chunk = arrayBufferToBase64(pcm16.buffer);
-          socket.send(JSON.stringify({
-            type: 'audio_chunk',
-            pcm: base64Chunk,
-            speakerRole: 'ambient'
-          }));
         }
       } else {
         // Push to talk buffering
@@ -509,6 +565,11 @@ async function startRecording() {
     scriptProcessor.connect(audioContext.destination);
 
     isRecording = true;
+    if (terminalMicState) {
+      terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Active';
+      terminalMicState.style.color = '#2ecc71';
+    }
+
     if (!isContinuous) {
       const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
       activeBtn.classList.add('recording');
@@ -529,6 +590,12 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
   
   let totalLength = 0;
   for (const chunk of recordedChunks) totalLength += chunk.length;
+  // Ignore clicks/brief noises under 150ms (2400 samples at 16kHz)
+  if (totalLength < 2400) {
+    recordedChunks = [];
+    return;
+  }
+
   const mergedPcm = new Int16Array(totalLength);
   let offset = 0;
   for (const chunk of recordedChunks) {
@@ -538,6 +605,11 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
   recordedChunks = [];
 
   const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
+  if (terminalSttText) {
+    terminalSttText.innerText = '⏳ Transcribing audio turn...';
+    terminalSttMeta.innerText = 'latest_short';
+  }
+
   if (socket && socket.readyState === WebSocket.OPEN) {
     const [srcLang, tgtLang] = langPairSelect.value.split('-');
     const isGuest = role === 'guest';
