@@ -77,7 +77,7 @@ class StreamingSTTWorker:
                 async for req in self._generator():
                     yield req
 
-            responses = pipeline.speech_async_client.streaming_recognize(requests=request_stream())
+            responses = await pipeline.speech_async_client.streaming_recognize(requests=request_stream())
             
             async for response in responses:
                 if not response.results:
