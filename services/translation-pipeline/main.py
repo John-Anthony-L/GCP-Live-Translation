@@ -70,6 +70,7 @@ class StreamingSTTWorker:
                 stt_lang = f"{self.src_lang}-US" if self.src_lang in ["en", "es"] else f"{self.src_lang}-{self.src_lang.upper()}"
                 alt_langs = None
 
+            print(f"[StreamingSTT] Starting stream: lang={stt_lang}, alt={alt_langs}, role={self.speaker_role}", flush=True)
             streaming_config = pipeline.get_streaming_config(lang_code=stt_lang, alternative_lang_codes=alt_langs)
             
             async def request_stream():
@@ -92,6 +93,7 @@ class StreamingSTTWorker:
 
                 is_final = result.is_final
                 detected = getattr(result, 'language_code', stt_lang)
+                print(f"[StreamingSTT] STT Response: '{transcript}' (is_final={is_final}, detected={detected})", flush=True)
 
                 if self.speaker_role == "ambient":
                     if detected.lower().startswith(self.tgt_lang.lower()):
@@ -139,6 +141,7 @@ class StreamingSTTWorker:
                         target_lang=cur_tgt,
                         use_glossary=self.use_glossary
                     )
+                    print(f"[StreamingSTT] Translation: '{transcript}' -> '{mt_res['translated_text']}'", flush=True)
                     await self.websocket.send_json({
                         "type": "translation_text",
                         "translated_text": mt_res["translated_text"],
@@ -280,6 +283,8 @@ async def websocket_endpoint(websocket: WebSocket):
             tgt = data.get("targetLang", "es")
             use_glossary = data.get("useGlossary", True)
             speaker_role = data.get("speakerRole", "cast-member")
+            if msg_type != "audio_chunk":
+                print(f"[PipelineWS] Msg: {msg_type}, speaker={speaker_role}, src={src}, tgt={tgt}", flush=True)
 
             if msg_type == "audio_stream_start":
                 if active_stream_worker:

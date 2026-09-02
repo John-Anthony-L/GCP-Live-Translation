@@ -14,8 +14,8 @@ let glossaryData = [];
 let recordedChunks = [];
 let vadSpeaking = false;
 let vadSilenceStart = 0;
-const VAD_ENERGY_THRESHOLD = 0.010; // Sensitive voice activity threshold
-const VAD_SILENCE_TIMEOUT_MS = 750; // 750ms silence automatically dispatches speech turn
+const VAD_ENERGY_THRESHOLD = 0.0035; // Sensitive voice activity threshold (responsive to normal conversational speech)
+const VAD_SILENCE_TIMEOUT_MS = 800; // 800ms silence automatically dispatches speech turn
 
 // DOM Elements
 const connectionStatus = document.getElementById('connectionStatus');
