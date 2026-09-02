@@ -26,6 +26,7 @@ const personaVoiceSelect = document.getElementById('personaVoice');
 const continuousStreamToggle = document.getElementById('continuousStreamToggle');
 const streamModeHint = document.getElementById('streamModeHint');
 const castMemberMicBtn = document.getElementById('castMemberMicBtn');
+const castMemberBtnSubtext = document.getElementById('castMemberBtnSubtext');
 const guestMicBtn = document.getElementById('guestMicBtn');
 const guestSpeakerLabel = document.getElementById('guestSpeakerLabel');
 const guestBtnSubtext = document.getElementById('guestBtnSubtext');
@@ -123,8 +124,8 @@ async function startContinuousStream() {
   streamModeHint.classList.add('stream-active');
   castMemberMicBtn.classList.add('ambient-active');
   guestMicBtn.classList.add('ambient-active');
-  castMemberMicBtn.querySelector('.mic-sub').innerText = '🎙️ Live Ambient Mic';
-  guestMicBtn.querySelector('.mic-sub').innerText = '🎙️ Live Ambient Mic';
+  if (castMemberBtnSubtext) castMemberBtnSubtext.innerText = '🎙️ Live Ambient Mic';
+  if (guestBtnSubtext) guestBtnSubtext.innerText = '🎙️ Live Ambient Mic';
 
   currentSpeakerRole = 'ambient';
   addMessageBubble('ambient', '🎙️ Hands-free continuous 2-way stream active — speak naturally in English or Spanish...');
@@ -139,7 +140,7 @@ function stopContinuousStream() {
   streamModeHint.classList.remove('stream-active');
   castMemberMicBtn.classList.remove('ambient-active');
   guestMicBtn.classList.remove('ambient-active');
-  castMemberMicBtn.querySelector('.mic-sub').innerText = 'Hold to speak 🇺🇸';
+  if (castMemberBtnSubtext) castMemberBtnSubtext.innerText = 'Hold to speak 🇺🇸';
   updateLanguageLabels();
 
   stopRecording();
@@ -403,6 +404,10 @@ async function startRecording() {
   
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -412,6 +417,8 @@ async function startRecording() {
         autoGainControl: true
       }
     });
+
+    console.log('[Mic] Microphone opened successfully. AudioContext state:', audioContext.state);
 
     const source = audioContext.createMediaStreamSource(micStream);
     scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
