@@ -1,5 +1,5 @@
-// Disney Parks 2-Way Live Translation Client (Powered by Translation LLM Advanced v3)
-let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'glossary'
+// Disney Parks 2-Way Live Translation Client (Powered by Gemini 3.5 Transcribe + Cloud DLP + MT v3 + TTS)
+let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'dlp' | 'glossary'
 let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest' | 'ambient'
 let isRecording = false;
 let isContinuous = false;
@@ -14,8 +14,21 @@ let glossaryData = [];
 let recordedChunks = [];
 let vadSpeaking = false;
 let vadSilenceStart = 0;
-const VAD_ENERGY_THRESHOLD = 0.0035; // Sensitive voice activity threshold (responsive to normal conversational speech)
+const VAD_ENERGY_THRESHOLD = 0.0035; // Sensitive voice activity threshold
 const VAD_SILENCE_TIMEOUT_MS = 800; // 800ms silence automatically dispatches speech turn
+
+// DLP State
+let dlpMasterEnabled = true;
+let dlpCatalog = [];
+let activeDlpInfoTypes = new Set([
+  "CREDIT_CARD_NUMBER",
+  "PHONE_NUMBER",
+  "EMAIL_ADDRESS",
+  "US_PASSPORT",
+  "DISNEY_RESERVATION_ID",
+  "MAGICBAND_UID",
+  "DISNEY_PIN"
+]);
 
 // DOM Elements
 const connectionStatus = document.getElementById('connectionStatus');
@@ -37,13 +50,36 @@ const clearChatBtn = document.getElementById('clearChatBtn');
 const latencyValue = document.getElementById('latencyValue');
 const latencySub = document.getElementById('latencySub');
 const sttLatencyVal = document.getElementById('sttLatencyValue');
+const dlpLatencyVal = document.getElementById('dlpLatencyValue');
+const dlpMetricSub = document.getElementById('dlpMetricSub');
 const transLatencyVal = document.getElementById('transLatencyValue');
 const ttsLatencyVal = document.getElementById('ttsLatencyValue');
-const engineBadge = document.getElementById('engineBadge');
 const textInput = document.getElementById('textInput');
 const sendTextBtn = document.getElementById('sendTextBtn');
 const glossaryGrid = document.getElementById('glossaryGrid');
 const glossarySearch = document.getElementById('glossarySearch');
+
+// DLP DOM Elements
+const dlpGlobalBadge = document.getElementById('dlpGlobalBadge');
+const dlpStatusPill = document.getElementById('dlpStatusPill');
+const dlpPillText = document.getElementById('dlpPillText');
+const dialogueDlpIndicator = document.getElementById('dialogueDlpIndicator');
+const dlpMasterStatusBox = document.getElementById('dlpMasterStatusBox');
+const dlpMasterStatusText = document.getElementById('dlpMasterStatusText');
+const dlpMasterCountText = document.getElementById('dlpMasterCountText');
+const dlpMasterCheckbox = document.getElementById('dlpMasterCheckbox');
+const presetKiosk = document.getElementById('presetKiosk');
+const presetConcierge = document.getElementById('presetConcierge');
+const presetPhone = document.getElementById('presetPhone');
+const activeRulesBadge = document.getElementById('activeRulesBadge');
+const dlpRulesGrid = document.getElementById('dlpRulesGrid');
+const sandboxInput = document.getElementById('sandboxInput');
+const runDlpSandboxBtn = document.getElementById('runDlpSandboxBtn');
+const sandboxOutput = document.getElementById('sandboxOutput');
+const sandboxLatency = document.getElementById('sandboxLatency');
+const sandboxPiiCount = document.getElementById('sandboxPiiCount');
+const sandboxFindingsWrap = document.getElementById('sandboxFindingsWrap');
+const sandboxFindingsList = document.getElementById('sandboxFindingsList');
 
 // Live Pipeline Telemetry Terminal Elements
 const terminalMicState = document.getElementById('terminalMicState');
@@ -51,6 +87,9 @@ const terminalRmsBar = document.getElementById('terminalRmsBar');
 const terminalRmsText = document.getElementById('terminalRmsText');
 const terminalSttText = document.getElementById('terminalSttText');
 const terminalSttMeta = document.getElementById('terminalSttMeta');
+const terminalDlpRow = document.getElementById('terminalDlpRow');
+const terminalDlpText = document.getElementById('terminalDlpText');
+const terminalDlpMeta = document.getElementById('terminalDlpMeta');
 const terminalMtText = document.getElementById('terminalMtText');
 const terminalMtMeta = document.getElementById('terminalMtMeta');
 const terminalTtsText = document.getElementById('terminalTtsText');
@@ -71,6 +110,7 @@ function addTerminalLog(msg, type = '') {
 async function init() {
   setupTabs();
   setupControls();
+  await setupDLP();
   await setupGlossary();
   setupQuickScenarios();
   await connectWebSocket();
@@ -81,20 +121,40 @@ function setupTabs() {
   tabButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const mode = btn.getAttribute('data-mode');
-      tabButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      if (mode === 'glossary') {
-        document.getElementById('translationSection').classList.remove('active');
-        document.getElementById('glossarySection').classList.add('active');
-      } else {
-        currentMode = 'translation-pipeline';
-        document.getElementById('glossarySection').classList.remove('active');
-        document.getElementById('translationSection').classList.add('active');
-        reconnectWebSocket();
-      }
+      switchMode(mode);
     });
   });
+
+  if (dlpGlobalBadge) {
+    dlpGlobalBadge.addEventListener('click', () => switchMode('dlp'));
+  }
+  if (dlpStatusPill) {
+    dlpStatusPill.addEventListener('click', () => switchMode('dlp'));
+  }
+}
+
+function switchMode(mode) {
+  currentMode = mode;
+  tabButtons.forEach(b => {
+    if (b.getAttribute('data-mode') === mode) {
+      b.classList.add('active');
+    } else {
+      b.classList.remove('active');
+    }
+  });
+
+  document.getElementById('translationSection').classList.remove('active');
+  document.getElementById('dlpSection').classList.remove('active');
+  document.getElementById('glossarySection').classList.remove('active');
+
+  if (mode === 'glossary') {
+    document.getElementById('glossarySection').classList.add('active');
+  } else if (mode === 'dlp') {
+    document.getElementById('dlpSection').classList.add('active');
+  } else {
+    document.getElementById('translationSection').classList.add('active');
+    reconnectWebSocket();
+  }
 }
 
 // Controls Setup
@@ -120,7 +180,7 @@ function setupControls() {
     chatFeed.innerHTML = `
       <div class="chat-welcome">
         <span class="sparkle-icon">✨</span>
-        <p>Chat cleared. Ready for live Disney translation.</p>
+        <p>Chat cleared. Ready for live Disney translation with Cloud DLP protection.</p>
       </div>
     `;
     currentMessageBubble = null;
@@ -137,6 +197,277 @@ function setupControls() {
   textInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleSendText();
   });
+}
+
+// Cloud Data Loss Protection (DLP) Setup
+async function setupDLP() {
+  try {
+    const res = await fetch('/api/dlp/catalog');
+    if (res.ok) {
+      const data = await res.json();
+      dlpCatalog = data.catalog || [];
+    }
+  } catch (err) {
+    console.warn('[DLP] Could not fetch catalog, using defaults');
+  }
+
+  if (dlpCatalog.length === 0) {
+    dlpCatalog = [
+      { name: "CREDIT_CARD_NUMBER", displayName: "Credit Card / PCI-DSS", category: "PCI Compliance", icon: "💳", description: "Visa, MasterCard, Amex, Discover card numbers and CVVs", placeholder: "[CREDIT_CARD_REDACTED]", defaultEnabled: true },
+      { name: "PHONE_NUMBER", displayName: "Phone Numbers", category: "Contact Info", icon: "📱", description: "US and International mobile/landline numbers", placeholder: "[PHONE_REDACTED]", defaultEnabled: true },
+      { name: "EMAIL_ADDRESS", displayName: "Email Addresses", category: "Contact Info", icon: "📧", description: "Guest and Cast Member personal/work email addresses", placeholder: "[EMAIL_REDACTED]", defaultEnabled: true },
+      { name: "PERSON_NAME", displayName: "Guest / Minor Names (COPPA)", category: "Children & PII Privacy", icon: "👶", description: "Full names of guests, minors, and family members", placeholder: "[GUEST_NAME_REDACTED]", defaultEnabled: false },
+      { name: "US_PASSPORT", displayName: "Passports & Gov IDs", category: "Government ID", icon: "🛂", description: "Passport numbers, driver licenses, national ID numbers", placeholder: "[PASSPORT_REDACTED]", defaultEnabled: true },
+      { name: "DISNEY_RESERVATION_ID", displayName: "Disney Reservation IDs", category: "Disney Brand Custom", icon: "🏰", description: "WDW/DLR hotel, dining, and park reservation numbers (e.g. WDW-982341)", placeholder: "[DISNEY_RESERVATION_REDACTED]", defaultEnabled: true, isCustom: true },
+      { name: "MAGICBAND_UID", displayName: "MagicBand+ Hardware UID", category: "Disney Brand Custom", icon: "🪄", description: "MagicBand+ RFID / NFC serial numbers (e.g. MB-A1B2C3D4)", placeholder: "[MAGICBAND_UID_REDACTED]", defaultEnabled: true, isCustom: true },
+      { name: "DISNEY_PIN", displayName: "Disney Account & Resort PINs", category: "Disney Brand Custom", icon: "🔑", description: "4-to-6 digit security PINs used for MyDisneyExperience & room charging", placeholder: "[PIN_REDACTED]", defaultEnabled: true, isCustom: true }
+    ];
+  }
+
+  renderDlpRules();
+  updateDlpUI();
+
+  // Master DLP Toggle
+  dlpMasterCheckbox.addEventListener('change', (e) => {
+    dlpMasterEnabled = e.target.checked;
+    updateDlpUI();
+    if (!dlpMasterEnabled) {
+      setActivePreset('phone');
+    } else {
+      setActivePreset(activeDlpInfoTypes.has('PERSON_NAME') ? 'kiosk' : 'concierge');
+    }
+  });
+
+  // Preset Buttons
+  presetKiosk.addEventListener('click', () => {
+    dlpMasterEnabled = true;
+    dlpMasterCheckbox.checked = true;
+    activeDlpInfoTypes = new Set(dlpCatalog.map(r => r.name));
+    setActivePreset('kiosk');
+    renderDlpRules();
+    updateDlpUI();
+    addTerminalLog('DLP Preset Applied: 🔒 Public Park Kiosk (All 8 detectors active including COPPA Names)', 'dlp');
+  });
+
+  presetConcierge.addEventListener('click', () => {
+    dlpMasterEnabled = true;
+    dlpMasterCheckbox.checked = true;
+    activeDlpInfoTypes = new Set(dlpCatalog.filter(r => r.name !== 'PERSON_NAME').map(r => r.name));
+    setActivePreset('concierge');
+    renderDlpRules();
+    updateDlpUI();
+    addTerminalLog('DLP Preset Applied: 🏰 Front Desk & Concierge (PCI & Custom masked, Names allowed for greetings)', 'dlp');
+  });
+
+  presetPhone.addEventListener('click', () => {
+    dlpMasterEnabled = false;
+    dlpMasterCheckbox.checked = false;
+    setActivePreset('phone');
+    renderDlpRules();
+    updateDlpUI();
+    addTerminalLog('DLP Preset Applied: 📞 Over-The-Phone Booking (DLP Bypassed for agent phone bookings)', 'dlp');
+  });
+
+  // Sandbox Setup
+  document.querySelectorAll('.sample-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const sampleText = chip.getAttribute('data-sample');
+      sandboxInput.value = sampleText;
+      runDlpSandbox();
+    });
+  });
+
+  runDlpSandboxBtn.addEventListener('click', runDlpSandbox);
+}
+
+function setActivePreset(name) {
+  presetKiosk.classList.remove('active');
+  presetConcierge.classList.remove('active');
+  presetPhone.classList.remove('active');
+
+  if (name === 'kiosk') presetKiosk.classList.add('active');
+  if (name === 'concierge') presetConcierge.classList.add('active');
+  if (name === 'phone') presetPhone.classList.add('active');
+}
+
+function renderDlpRules() {
+  if (!dlpRulesGrid) return;
+  dlpRulesGrid.innerHTML = '';
+
+  dlpCatalog.forEach(rule => {
+    const isEnabled = dlpMasterEnabled && activeDlpInfoTypes.has(rule.name);
+    const card = document.createElement('div');
+    card.className = `dlp-rule-card ${isEnabled ? 'enabled' : 'disabled'}`;
+    
+    card.innerHTML = `
+      <div class="dlp-rule-top">
+        <div class="dlp-rule-left">
+          <span class="dlp-rule-icon">${rule.icon || '🛡️'}</span>
+          <span class="dlp-rule-name">${rule.displayName}</span>
+        </div>
+        <label class="toggle-label">
+          <input type="checkbox" class="rule-checkbox" data-rule="${rule.name}" ${activeDlpInfoTypes.has(rule.name) ? 'checked' : ''} ${!dlpMasterEnabled ? 'disabled' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dlp-rule-meta">
+        <span class="dlp-rule-category ${rule.isCustom ? 'custom' : ''}">${rule.category || 'Standard InfoType'}</span>
+      </div>
+      <p class="dlp-rule-desc">${rule.description}</p>
+      <div class="dlp-rule-placeholder">Mask Token: ${rule.placeholder}</div>
+    `;
+
+    const cb = card.querySelector('.rule-checkbox');
+    cb.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        activeDlpInfoTypes.add(rule.name);
+      } else {
+        activeDlpInfoTypes.delete(rule.name);
+      }
+      // Check preset state
+      if (activeDlpInfoTypes.size === dlpCatalog.length) {
+        setActivePreset('kiosk');
+      } else if (activeDlpInfoTypes.size === dlpCatalog.length - 1 && !activeDlpInfoTypes.has('PERSON_NAME')) {
+        setActivePreset('concierge');
+      } else {
+        setActivePreset('');
+      }
+      renderDlpRules();
+      updateDlpUI();
+    });
+
+    dlpRulesGrid.appendChild(card);
+  });
+}
+
+function updateDlpUI() {
+  const activeCount = dlpMasterEnabled ? activeDlpInfoTypes.size : 0;
+  const totalCount = dlpCatalog.length;
+
+  if (activeRulesBadge) {
+    activeRulesBadge.innerText = `${activeCount} of ${totalCount} Active Detectors`;
+  }
+
+  if (dlpMasterStatusBox) {
+    if (dlpMasterEnabled) {
+      dlpMasterStatusBox.classList.remove('bypassed');
+      dlpMasterStatusText.innerText = 'DLP ACTIVE';
+      dlpMasterStatusText.style.color = '#2ecc71';
+      dlpMasterCountText.innerText = `${activeCount} of ${totalCount} Rules Enabled`;
+    } else {
+      dlpMasterStatusBox.classList.add('bypassed');
+      dlpMasterStatusText.innerText = 'DLP BYPASSED';
+      dlpMasterStatusText.style.color = '#e74c3c';
+      dlpMasterCountText.innerText = 'Bypass Mode (Phone Booking)';
+    }
+  }
+
+  // Header & Controls Badges
+  if (dlpGlobalBadge) {
+    if (dlpMasterEnabled) {
+      dlpGlobalBadge.className = 'dlp-header-badge active';
+      dlpGlobalBadge.querySelector('.dlp-badge-text').innerText = `🛡️ DLP Active (${activeCount})`;
+    } else {
+      dlpGlobalBadge.className = 'dlp-header-badge bypassed';
+      dlpGlobalBadge.querySelector('.dlp-badge-text').innerText = `⚠️ DLP Bypassed`;
+    }
+  }
+
+  if (dlpStatusPill && dlpPillText) {
+    if (dlpMasterEnabled) {
+      dlpStatusPill.className = 'dlp-pill-btn active';
+      dlpPillText.innerText = `DLP: Active (${activeCount} Rules)`;
+    } else {
+      dlpStatusPill.className = 'dlp-pill-btn bypassed';
+      dlpPillText.innerText = `DLP: Bypassed (Phone Mode)`;
+    }
+  }
+
+  if (dialogueDlpIndicator) {
+    if (dlpMasterEnabled) {
+      dialogueDlpIndicator.className = 'dlp-shield-indicator';
+      dialogueDlpIndicator.innerText = `🛡️ DLP Protected (${activeCount} Rules)`;
+    } else {
+      dialogueDlpIndicator.className = 'dlp-shield-indicator bypassed';
+      dialogueDlpIndicator.innerText = `⚠️ DLP Bypassed`;
+      dialogueDlpIndicator.style.borderColor = 'rgba(231, 76, 60, 0.4)';
+      dialogueDlpIndicator.style.color = '#ff6b6b';
+    }
+  }
+
+  if (terminalDlpText) {
+    if (dlpMasterEnabled) {
+      terminalDlpText.innerText = `DLP Engine Active (${activeCount} Rules Monitoring PII/PCI)`;
+    } else {
+      terminalDlpText.innerText = `DLP Engine BYPASSED (Raw text will pass to LLM & TTS)`;
+    }
+  }
+}
+
+// Interactive DLP Sandbox Runner
+async function runDlpSandbox() {
+  const text = sandboxInput.value.trim();
+  if (!text) {
+    sandboxOutput.innerHTML = '<span class="output-placeholder">Please type or select a sample text above first.</span>';
+    return;
+  }
+
+  sandboxOutput.innerHTML = '<em>Inspecting with Google Cloud DLP...</em>';
+
+  try {
+    const res = await fetch('/api/dlp/sanitize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        enabled: dlpMasterEnabled,
+        info_types: Array.from(activeDlpInfoTypes)
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      renderSandboxResult(data);
+    } else {
+      sandboxOutput.innerText = 'Inspection error. Please retry.';
+    }
+  } catch (err) {
+    console.error('Sandbox error:', err);
+    sandboxOutput.innerText = `Error running DLP: ${err.message}`;
+  }
+}
+
+function renderSandboxResult(data) {
+  let outputHtml = data.sanitized_text || '';
+  
+  // Highlight redaction placeholders
+  const placeholderRegex = /\[[A-Z0-9_]+_REDACTED\]|\[[A-Z0-9_]+\]/g;
+  outputHtml = outputHtml.replace(placeholderRegex, (match) => `<span class="redacted-token">${match}</span>`);
+
+  sandboxOutput.innerHTML = outputHtml;
+  if (sandboxLatency) sandboxLatency.innerText = `Inspection Latency: ${data.latency_ms || 0} ms`;
+  if (sandboxPiiCount) sandboxPiiCount.innerText = `${data.findings ? data.findings.length : 0} Sensitive Entities Detected`;
+
+  if (sandboxFindingsWrap && sandboxFindingsList) {
+    if (data.findings && data.findings.length > 0) {
+      sandboxFindingsWrap.style.display = 'block';
+      sandboxFindingsList.innerHTML = '';
+      data.findings.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'finding-item';
+        item.innerHTML = `
+          <div class="finding-item-left">
+            <span class="finding-badge">${f.icon || '🛡️'} ${f.displayName || f.infoType}</span>
+            <span class="finding-quote">${f.quote ? `"${f.quote}"` : ''}</span>
+          </div>
+          <span class="finding-replacement">➔ ${f.placeholder || '[REDACTED]'}</span>
+        `;
+        sandboxFindingsList.appendChild(item);
+      });
+    } else {
+      sandboxFindingsWrap.style.display = 'none';
+    }
+  }
 }
 
 async function startContinuousStream() {
@@ -222,7 +553,7 @@ function setupQuickScenarios() {
 
       if (socket && socket.readyState === WebSocket.OPEN) {
         lastSpeechStartTimestamp = Date.now();
-        setLiveStatus('Translating scenario with Translation LLM...', true);
+        setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
         
         const [src, tgt] = langPairSelect.value.split('-');
         const isCastMember = role === 'cast-member';
@@ -233,7 +564,9 @@ function setupQuickScenarios() {
           speakerRole: role,
           sourceLang: isCastMember ? src : tgt,
           targetLang: isCastMember ? tgt : src,
-          useGlossary: true
+          useGlossary: true,
+          useDlp: dlpMasterEnabled,
+          dlpInfoTypes: Array.from(activeDlpInfoTypes)
         }));
       }
     });
@@ -250,7 +583,7 @@ function handleSendText() {
 
   if (socket && socket.readyState === WebSocket.OPEN) {
     lastSpeechStartTimestamp = Date.now();
-    setLiveStatus('Translating with Translation LLM...', true);
+    setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
     const [src, tgt] = langPairSelect.value.split('-');
     socket.send(JSON.stringify({
       type: 'text',
@@ -258,7 +591,9 @@ function handleSendText() {
       speakerRole: 'cast-member',
       sourceLang: src,
       targetLang: tgt,
-      useGlossary: true
+      useGlossary: true,
+      useDlp: dlpMasterEnabled,
+      dlpInfoTypes: Array.from(activeDlpInfoTypes)
     }));
   }
 }
@@ -272,7 +607,6 @@ async function connectWebSocket() {
   let wsUrl = '';
 
   if (isLocal) {
-    // In local development, use authenticated local proxy on port 8092
     wsUrl = `ws://${host}:8092/ws/stream-translate`;
   } else {
     try {
@@ -312,7 +646,6 @@ async function connectWebSocket() {
         setLiveStatus('Ready');
         updateStatus('connected', 'Live & Ready');
       } else if (data.type === 'interim_transcript') {
-        // Real-time progressive interim STT as user speaks
         const role = data.speakerRole || currentSpeakerRole;
         if (!currentMessageBubble) {
           addMessageBubble(role, data.transcript);
@@ -328,7 +661,13 @@ async function connectWebSocket() {
         if (!currentMessageBubble) {
           addMessageBubble(role, data.transcript);
         }
-        updateSpeakerOriginalText(data.transcript, data.stt_ms, data.stt_model, role);
+        updateSpeakerOriginalText(
+          data.sanitized_transcript || data.transcript,
+          data.stt_ms,
+          data.stt_model,
+          role,
+          data.dlp_applied
+        );
         if (sttLatencyVal && data.stt_ms !== undefined) {
           sttLatencyVal.innerText = Math.round(data.stt_ms);
         }
@@ -339,7 +678,27 @@ async function connectWebSocket() {
         if (data.transcript) {
           addTerminalLog(`STT Captured: "${data.transcript}" (${data.detectedLang || 'en-US'}, ${Math.round(data.stt_ms || 0)}ms)`, 'stt');
         }
-        setLiveStatus('Translating with Translation LLM...', true);
+        setLiveStatus('Scrubbing PII & Translating...', true);
+      } else if (data.type === 'dlp_status') {
+        console.log('[WS] DLP Status:', data);
+        if (dlpLatencyVal && data.dlp_latency_ms !== undefined) {
+          dlpLatencyVal.innerText = Math.round(data.dlp_latency_ms);
+        }
+        if (dlpMetricSub) {
+          dlpMetricSub.innerText = data.pii_detected 
+            ? `⚠️ ${data.findings.length} PII Masked` 
+            : (data.dlp_enabled ? '🛡️ PCI & Custom Safe' : '⚠️ Bypassed');
+        }
+        if (terminalDlpText) {
+          if (data.pii_detected) {
+            terminalDlpText.innerHTML = `⚠️ <span style="color:#ff8a80">PII Scrubbed:</span> "${data.sanitized_text}"`;
+            terminalDlpMeta.innerText = `${data.findings.length} Findings • ${Math.round(data.dlp_latency_ms || 0)}ms`;
+            addTerminalLog(`[DLP MASKED] ${data.findings.map(f => f.displayName || f.infoType).join(', ')} -> Redacted before LLM (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
+          } else {
+            terminalDlpText.innerText = data.dlp_enabled ? `🛡️ Clean (No PII Detected)` : `⚠️ DLP Bypassed (Raw)`;
+            terminalDlpMeta.innerText = `${Math.round(data.dlp_latency_ms || 0)}ms`;
+          }
+        }
       } else if (data.type === 'translation_text') {
         console.log('[WS] Translation Text:', data);
         updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
@@ -362,6 +721,9 @@ async function connectWebSocket() {
         if (data.latency_breakdown) {
           if (sttLatencyVal && data.latency_breakdown.stt_ms !== undefined) {
             sttLatencyVal.innerText = Math.round(data.latency_breakdown.stt_ms);
+          }
+          if (dlpLatencyVal && data.latency_breakdown.dlp_ms !== undefined) {
+            dlpLatencyVal.innerText = Math.round(data.latency_breakdown.dlp_ms);
           }
           if (transLatencyVal && data.latency_breakdown.translation_ms !== undefined) {
             transLatencyVal.innerText = Math.round(data.latency_breakdown.translation_ms);
@@ -493,20 +855,17 @@ async function startRecording() {
 
     scriptProcessor.onaudioprocess = (e) => {
       if (!isRecording) return;
-      // If speaker is currently outputting synthesized translation, suppress VAD to avoid acoustic loop
       if (isSpeakingSelf) return;
 
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = convertFloat32ToInt16(inputData);
 
-      // Compute RMS energy for voice activity detection
       let sum = 0;
       for (let i = 0; i < inputData.length; i++) {
         sum += inputData[i] * inputData[i];
       }
       const rms = Math.sqrt(sum / inputData.length);
 
-      // Update live RMS audio meter in telemetry terminal
       if (terminalRmsBar) {
         const pct = Math.min(100, Math.round(rms * 2500));
         terminalRmsBar.style.width = `${pct}%`;
@@ -556,7 +915,6 @@ async function startRecording() {
           }
         }
       } else {
-        // Push to talk buffering
         recordedChunks.push(pcm16);
       }
     };
@@ -590,7 +948,6 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
   
   let totalLength = 0;
   for (const chunk of recordedChunks) totalLength += chunk.length;
-  // Ignore clicks/brief noises under 150ms (2400 samples at 16kHz)
   if (totalLength < 2400) {
     recordedChunks = [];
     return;
@@ -607,7 +964,7 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
   const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
   if (terminalSttText) {
     terminalSttText.innerText = '⏳ Transcribing audio turn...';
-    terminalSttMeta.innerText = 'latest_short';
+    terminalSttMeta.innerText = 'gemini-3.5-transcribe';
   }
 
   if (socket && socket.readyState === WebSocket.OPEN) {
@@ -621,7 +978,9 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
       speakerRole: role,
       sourceLang: isGuest ? tgtLang : srcLang,
       targetLang: isGuest ? srcLang : tgtLang,
-      useGlossary: true
+      useGlossary: true,
+      useDlp: dlpMasterEnabled,
+      dlpInfoTypes: Array.from(activeDlpInfoTypes)
     }));
   }
 }
@@ -688,7 +1047,6 @@ function playPcmChunk(base64Data, sampleRate = 24000) {
 function processNextAudioInQueue() {
   if (audioPlaybackQueue.length === 0) {
     isPlayingAudio = false;
-    // Allow 350ms cooldown before un-muting mic VAD to prevent speaker echo re-triggering
     setTimeout(() => {
       isSpeakingSelf = false;
       if (isContinuous) {
@@ -768,7 +1126,7 @@ function addMessageBubble(role, originalText) {
   currentMessageBubble = bubble;
 }
 
-function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-member') {
+function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-member', dlpApplied = false) {
   if (!currentMessageBubble) return;
   const textEl = currentMessageBubble.querySelector('.message-text');
   const metaEl = currentMessageBubble.querySelector('.message-meta span:first-child');
@@ -780,7 +1138,8 @@ function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-mem
 
   if (textEl) {
     const latencyBadge = sttMs ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '';
-    textEl.innerHTML = `"${transcript}"${latencyBadge}`;
+    const dlpBadge = dlpApplied ? ` <span class="badge-mini badge-dlp">🛡️ DLP Redacted</span>` : '';
+    textEl.innerHTML = `"${transcript}"${latencyBadge}${dlpBadge}`;
   }
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Disney Parks 2-Way Live Translation | Argolis GCP</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -21,6 +21,10 @@
         </div>
       </div>
       <div class="header-status">
+        <div id="dlpGlobalBadge" class="dlp-header-badge active" title="Google Cloud DLP PII Protection Status">
+          <span class="dlp-badge-dot"></span>
+          <span class="dlp-badge-text">🛡️ DLP Active</span>
+        </div>
         <div id="connectionStatus" class="status-indicator disconnected">
           <span class="dot"></span>
           <span class="status-label">Disconnected</span>
@@ -32,8 +36,13 @@
     <nav class="mode-tabs">
       <button class="tab-btn active" data-mode="translation-pipeline">
         <span class="tab-icon">🏰</span>
-        <span class="tab-title">2-Way Live Translation LLM</span>
-        <span class="tab-subtitle">STT ➔ Translation LLM Advanced v3 ➔ Neural TTS</span>
+        <span class="tab-title">2-Way Live Translation</span>
+        <span class="tab-subtitle">Gemini 3.5 Transcribe ➔ DLP ➔ MT v3 ➔ Neural TTS</span>
+      </button>
+      <button class="tab-btn" data-mode="dlp">
+        <span class="tab-icon">🛡️</span>
+        <span class="tab-title">Data Loss Protection (DLP)</span>
+        <span class="tab-subtitle">PCI-DSS, Guest PII & Disney Brand Rules</span>
       </button>
       <button class="tab-btn" data-mode="glossary">
         <span class="tab-icon">📖</span>
@@ -44,7 +53,7 @@
 
     <!-- Main Content Area -->
     <main class="main-content">
-      <!-- Section 1 & 2: Live Translation View -->
+      <!-- Section 1: Live Translation View -->
       <section id="translationSection" class="view-section active">
         <!-- Controls Bar -->
         <div class="controls-card">
@@ -78,6 +87,14 @@
             </label>
             <span class="toggle-hint" id="streamModeHint">Dual Push-to-Talk (Active)</span>
           </div>
+
+          <div class="control-group dlp-quick-group">
+            <label>Privacy Shield</label>
+            <button id="dlpStatusPill" class="dlp-pill-btn active" title="Click to configure DLP filters">
+              <span class="pill-icon">🛡️</span>
+              <span id="dlpPillText">DLP: Active (7 Rules)</span>
+            </button>
+          </div>
         </div>
 
         <!-- Latency & Performance Telemetry HUD -->
@@ -97,11 +114,20 @@
               <span id="sttLatencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub" id="sttModelSub">gemini-3.5-transcribe-live</span>
+            <span class="metric-sub" id="sttModelSub">gemini-3.5-transcribe</span>
+          </div>
+
+          <div class="metric-card" id="dlpMetricCard">
+            <span class="metric-title">2. Cloud DLP Mask</span>
+            <div class="metric-value-row">
+              <span id="dlpLatencyValue" class="metric-val">--</span>
+              <span class="metric-unit">ms</span>
+            </div>
+            <span class="metric-sub" id="dlpMetricSub">Cloud SDP Active</span>
           </div>
 
           <div class="metric-card" id="transMetricCard">
-            <span class="metric-title">2. Translation LLM</span>
+            <span class="metric-title">3. Translation LLM</span>
             <div class="metric-value-row">
               <span id="transLatencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
@@ -110,7 +136,7 @@
           </div>
 
           <div class="metric-card" id="ttsMetricCard">
-            <span class="metric-title">3. TTS Synthesis</span>
+            <span class="metric-title">4. TTS Synthesis</span>
             <div class="metric-value-row">
               <span id="ttsLatencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
@@ -123,21 +149,24 @@
         <div class="dialogue-container">
           <div class="dialogue-header">
             <span>2-WAY INTERPRETER TRANSCRIPT</span>
-            <button id="clearChatBtn" class="clear-btn">Clear</button>
+            <div class="dialogue-header-actions">
+              <span class="dlp-shield-indicator" id="dialogueDlpIndicator">🛡️ DLP Protected</span>
+              <button id="clearChatBtn" class="clear-btn">Clear</button>
+            </div>
           </div>
           
           <div class="chat-feed" id="chatFeed">
             <div class="chat-welcome">
               <span class="sparkle-icon">✨</span>
               <p>Welcome to the <strong>Disney Parks Live Translation</strong> testbed.</p>
-              <p class="sub-hint">Use the dual buttons below: hold <strong>Cast Member</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Spoken audio will play back automatically!</p>
+              <p class="sub-hint">Use the dual buttons below: hold <strong>Cast Member</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Real-time Cloud DLP will mask PII & credit cards before translation and synthesis!</p>
             </div>
           </div>
         </div>
 
         <!-- Quick Disney Test Scenarios -->
         <div class="quick-scenarios-card">
-          <span class="scenarios-title">🎯 Quick Disney Test Scenarios (Click to Run):</span>
+          <span class="scenarios-title">🎯 Quick Disney & PII Test Scenarios (Click to Run):</span>
           <div class="scenarios-buttons">
             <button class="scenario-chip" data-lang="en" data-text="Where is the Lightning Lane entrance for Space Mountain in Tomorrowland?">
               🇺🇸 Space Mountain & Lightning Lane
@@ -145,11 +174,11 @@
             <button class="scenario-chip" data-lang="es" data-text="¿A qué hora es el Rope Drop para Star Wars: Rise of the Resistance?">
               🇪🇸 Rope Drop & Rise of the Resistance
             </button>
-            <button class="scenario-chip" data-lang="en" data-text="Can you show me where to find a Cast Member for Disney PhotoPass?">
-              🇺🇸 Cast Member & PhotoPass
+            <button class="scenario-chip scenario-pii" data-lang="en" data-text="Hi, my reservation is WDW-982341 and my credit card is 4532 8912 3456 7890.">
+              💳 PII Test: Credit Card & Reservation ID
             </button>
-            <button class="scenario-chip" data-lang="es" data-text="¿Puedo usar mi MagicBand+ para entrar a la Fila Virtual de Haunted Mansion?">
-              🇪🇸 MagicBand+ & Fila Virtual
+            <button class="scenario-chip scenario-pii" data-lang="es" data-text="Hola, quiero vincular mi MagicBand MB-A1B2C3D4 con el teléfono 407-555-0142 y PIN 9821.">
+              🪄 PII Test: MagicBand+ & PIN
             </button>
           </div>
         </div>
@@ -195,7 +224,7 @@
 
         <!-- Optional Text Input fallback for testing without mic -->
         <div class="text-fallback-bar">
-          <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'Where is Lightning Lane?')">
+          <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'My reservation is WDW-89214 and card is 4111 2222 3333 4444')">
           <button id="sendTextBtn" class="send-btn">Send & Speak</button>
         </div>
 
@@ -228,10 +257,17 @@
               <span class="terminal-meta" id="terminalSttMeta">--</span>
             </div>
 
+            <!-- Cloud DLP Sanitization -->
+            <div class="terminal-row" id="terminalDlpRow">
+              <span class="terminal-label">🛡️ Cloud DLP:</span>
+              <span class="terminal-text highlight-dlp" id="terminalDlpText">DLP Engine Active (Monitoring PCI & PII)</span>
+              <span class="terminal-meta" id="terminalDlpMeta">--</span>
+            </div>
+
             <!-- Translation LLM Output -->
             <div class="terminal-row">
               <span class="terminal-label">🌐 Translation LLM:</span>
-              <span class="terminal-text highlight-mt" id="terminalMtText">Waiting for STT...</span>
+              <span class="terminal-text highlight-mt" id="terminalMtText">Waiting for STT & DLP...</span>
               <span class="terminal-meta" id="terminalMtMeta">--</span>
             </div>
 
@@ -244,8 +280,118 @@
 
             <!-- Live Event Log Stream -->
             <div class="terminal-log-stream" id="terminalLogStream">
-              <div class="log-line">[SYSTEM] Testbed initialized. Ready to capture and translate English ↔ Spanish live.</div>
+              <div class="log-line">[SYSTEM] Testbed initialized. Ready to capture, scrub PII, and translate live.</div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Data Loss Protection (DLP) View -->
+      <section id="dlpSection" class="view-section">
+        <!-- DLP Hero Card -->
+        <div class="dlp-header-card">
+          <div class="dlp-header-top">
+            <div class="dlp-header-titles">
+              <h2>🛡️ Google Cloud Sensitive Data Protection (DLP)</h2>
+              <p>Real-time redaction of PCI-DSS financial data, Guest Contact PII, and Disney Custom Identifiers (MagicBand+ & Reservation IDs) before translation and audio synthesis.</p>
+            </div>
+            <div class="dlp-status-box" id="dlpMasterStatusBox">
+              <span class="dlp-status-icon">🛡️</span>
+              <div class="dlp-status-info">
+                <strong id="dlpMasterStatusText">DLP ACTIVE</strong>
+                <span id="dlpMasterCountText">7 of 8 Rules Enabled</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Master Toggle & Preset Buttons -->
+          <div class="dlp-toolbar">
+            <div class="dlp-master-toggle-wrap">
+              <label class="toggle-label big-toggle">
+                <span>Master DLP Scrubbing:</span>
+                <input type="checkbox" id="dlpMasterCheckbox" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="dlp-presets">
+              <span class="presets-label">Deployment Presets:</span>
+              <button class="preset-btn" id="presetKiosk" title="All privacy filters enabled including Names">
+                🔒 Public Park Kiosk
+              </button>
+              <button class="preset-btn active" id="presetConcierge" title="PCI & Custom Masked, Guest Names Allowed for Greetings">
+                🏰 Front Desk & Concierge
+              </button>
+              <button class="preset-btn warning" id="presetPhone" title="Bypass DLP for Phone Booking Agents">
+                📞 Over-The-Phone Booking (Bypass)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- InfoTypes Configuration Grid -->
+        <div class="dlp-rules-card">
+          <div class="dlp-rules-header">
+            <h3>⚙️ Active InfoType Detectors & Inspection Rules</h3>
+            <span class="rules-badge" id="activeRulesBadge">7 Active Detectors</span>
+          </div>
+
+          <div class="dlp-grid" id="dlpRulesGrid">
+            <!-- Populated dynamically by JavaScript -->
+          </div>
+        </div>
+
+        <!-- Interactive DLP Test Sandbox -->
+        <div class="dlp-sandbox-card">
+          <div class="sandbox-header">
+            <div class="sandbox-title">
+              <span class="sandbox-icon">🧪</span>
+              <h3>Interactive DLP Inspection & Redaction Sandbox</h3>
+            </div>
+            <span class="sandbox-subtitle">Test raw text against active Cloud DLP filters in real time</span>
+          </div>
+
+          <!-- Sample Preset Prompts -->
+          <div class="sandbox-samples">
+            <span class="samples-title">Quick Samples:</span>
+            <button class="sample-chip" data-sample="Hello Cast Member, my name is Maria and my Disney reservation is WDW-982341. My Visa is 4532-8912-3456-7890 with exp 12/28.">
+              💳 Full Guest Booking & Credit Card
+            </button>
+            <button class="sample-chip" data-sample="Can you help link my MagicBand MB-A1B2C3D4 to my account? My email is guest.disney@example.com and phone is 407-555-0199.">
+              🪄 MagicBand+ & Contact Info
+            </button>
+            <button class="sample-chip" data-sample="My room security PIN is 7842 and my passport number is A12345678.">
+              🔑 Disney Room PIN & Passport
+            </button>
+          </div>
+
+          <div class="sandbox-io-grid">
+            <!-- Input Column -->
+            <div class="sandbox-col">
+              <label for="sandboxInput">Raw Guest Speech / Input Text:</label>
+              <textarea id="sandboxInput" rows="4" placeholder="Type or paste text with credit card numbers, phone numbers, reservation IDs, or MagicBand IDs..."></textarea>
+              <button id="runDlpSandboxBtn" class="sandbox-btn">
+                <span>🛡️ Inspect & Mask with Cloud DLP</span>
+              </button>
+            </div>
+
+            <!-- Output Column -->
+            <div class="sandbox-col">
+              <label>Redacted Sanitized Output (Sent to Translation & TTS):</label>
+              <div class="sandbox-output-box" id="sandboxOutput">
+                <span class="output-placeholder">Run inspection or select a sample above to view masked output...</span>
+              </div>
+              <div class="sandbox-findings-meta" id="sandboxFindingsMeta">
+                <span id="sandboxLatency">Latency: -- ms</span>
+                <span id="sandboxPiiCount">0 PII Entities Detected</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Detailed Findings Table -->
+          <div class="sandbox-findings-table-wrap" id="sandboxFindingsWrap" style="display: none;">
+            <h4>📋 Detected Sensitive Entities:</h4>
+            <div id="sandboxFindingsList" class="findings-list"></div>
           </div>
         </div>
       </section>
@@ -268,10 +414,10 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <span>Disney Parks Live Translation POC • Google Cloud Argolis • Project: <code>disney-parks-live-translation</code></span>
+      <span>Disney Parks Live Translation POC • Google Cloud Argolis • Project: <code>disney-parks-live-translation</code> • Cloud DLP Active</span>
     </footer>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

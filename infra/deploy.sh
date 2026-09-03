@@ -28,6 +28,7 @@ gcloud services enable \
     translate.googleapis.com \
     speech.googleapis.com \
     texttospeech.googleapis.com \
+    dlp.googleapis.com \
     run.googleapis.com \
     artifactregistry.googleapis.com \
     storage.googleapis.com \
