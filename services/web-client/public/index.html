@@ -406,13 +406,79 @@
         </div>
       </section>
 
-      <!-- Section 3: Disney Glossary Reference -->
+      <!-- Section 3: Disney Glossary Reference & Management -->
       <section id="glossarySection" class="view-section">
         <div class="glossary-header-card">
-          <h2>🏰 Disney Parks Glossary & Brand Injection</h2>
-          <p>These terms and attractions are enforced in the live translation prompt and Google Cloud Translation API to preserve Disney brand equity.</p>
-          <div class="glossary-search-bar">
-            <input type="text" id="glossarySearch" placeholder="Search Disney attractions, services, characters...">
+          <div class="glossary-header-top">
+            <div>
+              <h2>🏰 Disney Parks Glossary & Brand Injection</h2>
+              <p>These terms and attractions are enforced in the live translation prompt and Google Cloud Translation API to preserve Disney brand equity.</p>
+            </div>
+            <button id="openAddTermModalBtn" class="btn-primary-action">
+              <span>➕ Add New Term</span>
+            </button>
+          </div>
+          <div class="glossary-toolbar">
+            <div class="glossary-search-bar">
+              <input type="text" id="glossarySearch" placeholder="Search Disney attractions, services, characters...">
+            </div>
+            <div class="glossary-stats">
+              <span id="glossaryCountBadge" class="badge-count">24 Terms Active</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add New Term Modal / Form Drawer -->
+        <div id="addTermModal" class="glossary-modal" style="display: none;">
+          <div class="glossary-modal-content">
+            <div class="modal-header">
+              <h3>➕ Add New Disney Protected Term</h3>
+              <button id="closeAddTermModalBtn" class="modal-close">&times;</button>
+            </div>
+            <form id="addTermForm" class="glossary-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="newTermEn">English Term / Attraction / Concept *</label>
+                  <input type="text" id="newTermEn" placeholder="e.g. TRON Lightcycle / Run" required>
+                </div>
+                <div class="form-group">
+                  <label for="newTermEs">Spanish Translation / Preferred Term *</label>
+                  <input type="text" id="newTermEs" placeholder="e.g. TRON Lightcycle / Run" required>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="newTermCategory">Category</label>
+                  <select id="newTermCategory" class="custom-select">
+                    <option value="Attraction" selected>Attraction / Ride</option>
+                    <option value="Service">Park Service / Ticketing</option>
+                    <option value="Personnel">Cast Member / Role</option>
+                    <option value="Park Concept">Park Concept / Routine</option>
+                    <option value="Food & Beverage">Food & Beverage</option>
+                    <option value="Merchandise">Merchandise / Tech</option>
+                    <option value="Custom">Custom Brand Term</option>
+                  </select>
+                </div>
+                <div class="form-group checkbox-group-inline">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="newTermKeepOriginal" checked>
+                    <span class="slider"></span>
+                  </label>
+                  <span class="toggle-label-text">🔒 Preserve English Brand Name</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="newTermNotes">Context / Guidelines / Notes</label>
+                <input type="text" id="newTermNotes" placeholder="e.g. Magic Kingdom high-speed coaster in Tomorrowland">
+              </div>
+
+              <div class="form-actions">
+                <button type="button" id="cancelAddTermBtn" class="btn-cancel">Cancel</button>
+                <button type="submit" id="saveTermBtn" class="btn-submit">💾 Save & Enforce Term</button>
+              </div>
+            </form>
           </div>
         </div>
 

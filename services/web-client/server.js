@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const http = require('http');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,14 +18,108 @@ app.get('/config.json', (req, res) => {
   });
 });
 
-// Disney Glossary API endpoint
+// Helper to get glossary path
+const getGlossaryPath = () => {
+  const rootGlossary = path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json');
+  if (fs.existsSync(rootGlossary)) return rootGlossary;
+  return path.join(__dirname, 'disney_parks_glossary.json');
+};
+
+// Disney Glossary API endpoints
 app.get('/api/glossary', (req, res) => {
   try {
-    const glossaryPath = path.join(__dirname, 'disney_parks_glossary.json');
-    const glossary = require(glossaryPath);
-    res.json(glossary);
+    const glossaryPath = getGlossaryPath();
+    const raw = fs.readFileSync(glossaryPath, 'utf8');
+    res.json(JSON.parse(raw));
   } catch (err) {
     res.status(500).json({ error: 'Failed to load Disney glossary', message: err.message });
+  }
+});
+
+// Add new glossary term
+app.post('/api/glossary/terms', (req, res) => {
+  try {
+    const { en, es, category, keep_original, notes } = req.body;
+    if (!en || !es) {
+      return res.status(400).json({ error: 'English term and Spanish translation are required.' });
+    }
+
+    const termId = en.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const newTerm = {
+      term_id: termId,
+      en: en.trim(),
+      category: category ? category.trim() : 'Custom Term',
+      keep_original: Boolean(keep_original),
+      translations: {
+        es: es.trim()
+      },
+      notes: notes ? notes.trim() : 'Added via Glossary Manager'
+    };
+
+    const targetPaths = [
+      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
+      path.join(__dirname, 'disney_parks_glossary.json')
+    ];
+
+    let saved = false;
+    for (const p of targetPaths) {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        // Remove existing if duplicate
+        data.terms = data.terms.filter(t => t.term_id !== termId && t.en.toLowerCase() !== en.trim().toLowerCase());
+        data.terms.push(newTerm);
+        fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+        saved = true;
+      }
+    }
+
+    // Also update CSV file if it exists
+    const csvPaths = [
+      path.resolve(__dirname, '../../glossaries/disney_glossary_en_es.csv')
+    ];
+    for (const cp of csvPaths) {
+      if (fs.existsSync(cp)) {
+        fs.appendFileSync(cp, `\n${newTerm.en},${newTerm.translations.es}`);
+      }
+    }
+
+    res.json({ success: true, term: newTerm, total: saved });
+  } catch (err) {
+    console.error('Error adding term:', err);
+    res.status(500).json({ error: 'Failed to save new term', message: err.message });
+  }
+});
+
+// Delete glossary term
+app.delete('/api/glossary/terms/:termId', (req, res) => {
+  try {
+    const { termId } = req.params;
+    const targetPaths = [
+      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
+      path.join(__dirname, 'disney_parks_glossary.json')
+    ];
+
+    let deleted = false;
+    for (const p of targetPaths) {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        const initCount = data.terms.length;
+        data.terms = data.terms.filter(t => t.term_id !== termId);
+        if (data.terms.length < initCount) {
+          fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+          deleted = true;
+        }
+      }
+    }
+
+    if (deleted) {
+      res.json({ success: true, message: `Term ${termId} removed.` });
+    } else {
+      res.status(404).json({ error: `Term ${termId} not found.` });
+    }
+  } catch (err) {
+    console.error('Error deleting term:', err);
+    res.status(500).json({ error: 'Failed to delete term', message: err.message });
   }
 });
 

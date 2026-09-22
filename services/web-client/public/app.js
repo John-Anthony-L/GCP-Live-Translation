@@ -1198,6 +1198,66 @@ async function setupGlossary() {
     { term_id: "big_thunder_mountain", en: "Big Thunder Mountain Railroad", category: "Attraction", keep_original: true, translations: { es: "Big Thunder Mountain Railroad" }, notes: "Frontierland coaster." }
   ];
 
+  // UI Elements for Glossary Management
+  const addTermModal = document.getElementById('addTermModal');
+  const openAddTermModalBtn = document.getElementById('openAddTermModalBtn');
+  const closeAddTermModalBtn = document.getElementById('closeAddTermModalBtn');
+  const cancelAddTermBtn = document.getElementById('cancelAddTermBtn');
+  const addTermForm = document.getElementById('addTermForm');
+  const glossaryCountBadge = document.getElementById('glossaryCountBadge');
+
+  if (openAddTermModalBtn && addTermModal) {
+    openAddTermModalBtn.addEventListener('click', () => {
+      addTermModal.style.display = 'flex';
+      document.getElementById('newTermEn')?.focus();
+    });
+  }
+
+  const closeModal = () => {
+    if (addTermModal) addTermModal.style.display = 'none';
+    if (addTermForm) addTermForm.reset();
+  };
+
+  if (closeAddTermModalBtn) closeAddTermModalBtn.addEventListener('click', closeModal);
+  if (cancelAddTermBtn) cancelAddTermBtn.addEventListener('click', closeModal);
+
+  if (addTermForm) {
+    addTermForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const en = document.getElementById('newTermEn').value.trim();
+      const es = document.getElementById('newTermEs').value.trim();
+      const category = document.getElementById('newTermCategory').value;
+      const keep_original = document.getElementById('newTermKeepOriginal').checked;
+      const notes = document.getElementById('newTermNotes').value.trim();
+
+      if (!en || !es) return;
+
+      try {
+        const res = await fetch('/api/glossary/terms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ en, es, category, keep_original, notes })
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          // Update local glossary array
+          const termId = result.term.term_id;
+          glossaryData = glossaryData.filter(t => t.term_id !== termId && t.en.toLowerCase() !== en.toLowerCase());
+          glossaryData.push(result.term);
+          renderGlossary(glossaryData);
+          closeModal();
+          addTerminalLog(`Added protected Disney term: "${en}" ➔ "${es}"`, 'system');
+        } else {
+          alert('Failed to save term. Please try again.');
+        }
+      } catch (err) {
+        console.error('Error saving term:', err);
+        alert('Could not save term to server.');
+      }
+    });
+  }
+
   try {
     const res = await fetch('/api/glossary');
     if (res.ok) {
@@ -1224,8 +1284,49 @@ async function setupGlossary() {
   });
 }
 
+function updateGlossaryCount(count) {
+  const badge = document.getElementById('glossaryCountBadge');
+  if (badge) {
+    badge.innerText = `${count} Terms Active`;
+  }
+}
+
+async function deleteGlossaryTerm(termId, termEn) {
+  if (!confirm(`Are you sure you want to remove "${termEn}" from the protected glossary?`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/glossary/terms/${encodeURIComponent(termId)}`, {
+      method: 'DELETE'
+    });
+
+    if (res.ok) {
+      glossaryData = glossaryData.filter(t => t.term_id !== termId);
+      renderGlossary(glossaryData);
+      addTerminalLog(`Removed glossary term: "${termEn}"`, 'system');
+    } else {
+      alert('Could not delete term.');
+    }
+  } catch (err) {
+    console.error('Error deleting term:', err);
+    alert('Error connecting to glossary server.');
+  }
+}
+
 function renderGlossary(terms) {
   glossaryGrid.innerHTML = '';
+  updateGlossaryCount(terms.length);
+
+  if (terms.length === 0) {
+    glossaryGrid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; color: #94a3b8; padding: 40px 0;">
+        <p>No matching terms found in glossary.</p>
+      </div>
+    `;
+    return;
+  }
+
   terms.forEach(t => {
     const card = document.createElement('div');
     card.className = 'glossary-card';
@@ -1237,7 +1338,20 @@ function renderGlossary(terms) {
       </div>
       <div class="term-target">➔ ${es}</div>
       <div class="term-notes">${t.keep_original ? '🔒 Preserve English Brand' : '🔄 Contextual Translation'} • ${t.notes || ''}</div>
+      <div class="glossary-card-footer">
+        <span style="font-size: 0.68rem; color: #64748b;">ID: <code>${t.term_id}</code></span>
+        <button class="btn-delete-term" title="Delete term" data-term-id="${t.term_id}" data-term-en="${t.en}">🗑️ Remove</button>
+      </div>
     `;
+
+    const delBtn = card.querySelector('.btn-delete-term');
+    if (delBtn) {
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteGlossaryTerm(t.term_id, t.en);
+      });
+    }
+
     glossaryGrid.appendChild(card);
   });
 }

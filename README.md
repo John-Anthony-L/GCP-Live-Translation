@@ -25,47 +25,52 @@ Deployed on Google Cloud Platform (Argolis project: `disney-parks-live-translati
 
 ```mermaid
 flowchart TD
-    subgraph iOS_Device["📱 iOS Device / Client"]
-        Mic["Microphone Input (16kHz PCM)"]
-        Speaker["Speaker Output (24kHz PCM)"]
-        UI["SwiftUI Live Interpreter & Subtitles"]
-        WSClient["WebSocket Client (URLSession)"]
+    subgraph Client["Client Layer"]
+        Web["<b>Web Client (Browser)</b><br/>• Mic Audio Capture<br/>• Live Captions Display<br/>• Audio Playback"]
     end
 
-    subgraph GCP_Cloud_Run["☁️ Google Cloud (Argolis: disney-parks-live-translation)"]
-        subgraph Proxy["Service 1: Gemini Live Proxy (Node.js)"]
-            Auth["ADC / Vertex AI Token Auth"]
-            GlossaryEngine["Disney Glossary Prompt Builder"]
-            BidiWS["Bidirectional WebSocket Gateway"]
-        end
-
-        subgraph Pipeline["Service 2: Translation Pipeline (Python FastAPI)"]
-            STT["Cloud Speech-to-Text v2\n(Chirp 3 GA + Disney Phrase Sets)"]
-            DLP["Cloud DLP / Sensitive Data Protection\n(PII Masking)"]
-            TranslateV3["Cloud Translation API Advanced\n(GCS Disney Glossary)"]
-            TTS["Cloud Text-to-Speech\n(Neural2 / Journey)"]
-        end
-
-        subgraph WebTestbed["Service 3: Web & Mobile Testbed"]
-            WebUI["HTML5 AudioWorklet Testbed UI"]
-        end
+    subgraph Gateway["Ingress & Session Management"]
+        Proxy["<b>Gemini Live Proxy / WebSocket Hub</b><br/>(Cloud Run)"]
     end
 
-    subgraph VertexAI["✨ Vertex AI (Google Cloud)"]
-        GeminiModel["Gemini 2.0 Multimodal Live API\n(gemini-2.0-flash-exp)"]
+    subgraph Pipeline["Translation & Safety Pipeline"]
+        direction TB
+        STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA)<br/>• Cloud Speech (latest_short)<br/>• Gemini 3.5 Live"]
+        DLP["<b>2. Sensitive Data Protection</b><br/>(Cloud DLP / Redaction)<br/>• PCI-DSS & PII<br/>• MagicBand UID, PIN, Res IDs"]
+        Trans["<b>3. Translation & Glossary</b><br/>• Cloud Translation v3<br/>• Disney Parks Glossary Biasing"]
+        TTS["<b>4. Text-to-Speech (TTS)</b><br/>• Cloud TTS (Neural2 / Journey)<br/>• Multi-lingual Voices"]
     end
 
-    Mic --> WSClient
-    WSClient <-->|WebSocket Stream| BidiWS
-    Auth --> GeminiModel
-    GlossaryEngine --> GeminiModel
-    BidiWS <-->|BidiGenerateContent WebSocket| GeminiModel
-    BidiWS --> WSClient
-    WSClient --> Speaker
-    WSClient --> UI
+    subgraph Experience["Cast Member & Guest Output"]
+        TextOut["<b>Real-Time Dual Captions</b><br/>(Live Screen Display)"]
+        AudioOut["<b>Translated Audio Playback</b><br/>(Speaker / Headset)"]
+    end
 
-    Mic -.->|Benchmark Mode| Pipeline
-    STT --> DLP --> TranslateV3 --> TTS
+    %% Audio input flow
+    Web -->|"Live Mic Audio (PCM/Opus)"| Proxy
+    Proxy -->|"Audio Stream"| STT
+    STT -->|"Raw Transcript"| DLP
+    DLP -->|"Redacted Text"| Trans
+    Trans -->|"Translated Text"| TTS
+
+    %% Output flow directly from Translation Pipeline
+    Trans -->|"Translated Subtitles"| TextOut
+    TTS -->|"Synthesized Speech"| AudioOut
+
+    %% Feedback loop to Web Client UI
+    TextOut -.->|"Rendered in UI"| Web
+    AudioOut -.->|"Audio Stream"| Web
+
+    %% Styling
+    classDef clientStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef proxyStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef pipeStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+    classDef outStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+
+    class Web clientStyle;
+    class Proxy proxyStyle;
+    class STT,DLP,Trans,TTS pipeStyle;
+    class AudioOut,TextOut outStyle;
 ```
 
 ---
@@ -235,49 +240,100 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 
 ---
 
+## 🚀 Getting Started with Your Own Google Cloud Project
+
+To run this POC in your own GCP environment (without accessing any external project):
+
+### 1. Prerequisites
+* [Google Cloud SDK (`gcloud`)](https://cloud.google.com/sdk/docs/install) installed.
+* [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker engine.
+* A GCP project with billing enabled.
+
+### 2. Configure Environment Variables
+Copy `.env.example` to `.env` in the repository root:
+```bash
+cp .env.example .env
+```
+Open `.env` and set `PROJECT_ID` to your Google Cloud project ID:
+```env
+PROJECT_ID=your-own-gcp-project-id
+LOCATION=us-central1
+CHIRP_REGION=us
+STT_MODEL=chirp_3
+GLOSSARY_ID=disney-parks-glossary-en-es
+GLOSSARY_BUCKET=your-own-gcp-project-id-glossaries
+```
+
+### 3. Authenticate Google Cloud ADC
+Ensure your local environment is authenticated to your project:
+```bash
+# Set active GCP project
+gcloud config set project YOUR_PROJECT_ID
+
+# Authenticate Application Default Credentials (ADC)
+gcloud auth application-default login
+
+# Enable required Google Cloud APIs
+gcloud services enable \
+  run.googleapis.com \
+  speech.googleapis.com \
+  translate.googleapis.com \
+  texttospeech.googleapis.com \
+  dlp.googleapis.com \
+  aiplatform.googleapis.com \
+  storage.googleapis.com
+```
+
+### 4. Run Locally with Docker Compose
+```bash
+docker compose up --build
+```
+* **Web Client & Management Dashboard:** `http://localhost:3000`
+* **Gemini Live Proxy (WS):** `ws://localhost:8080/live-translate`
+* **Translation Pipeline:** `http://localhost:8081` (API Docs: `http://localhost:8081/docs`)
+
+---
+
+## 📖 Disney Glossary & Terminology Management
+
+The system preserves Disney brand equity, attractions, and park terms using a dual-layer enforcement:
+1. **Prompt Biasing**: Injected into Gemini Live and Chirp 3 Speech Adaptation (+20 boost).
+2. **Cloud Translation API Advanced v3**: Deterministic TSV/CSV glossary mapping.
+
+### Adding & Removing Terms via Web UI
+In the web interface at `http://localhost:3000`:
+1. Click on the **"📖 Disney Brand Glossary"** tab.
+2. Click **"➕ Add New Term"** to open the creation modal.
+3. Provide the English term, translation, category, and whether to preserve the brand name. Click **"💾 Save & Enforce Term"**.
+4. To remove an existing term, click the **"🗑️ Remove"** button on any glossary card.
+
+### Programmatic Glossary API
+* **List All Terms:** `GET /api/glossary`
+* **Add Term:** `POST /api/glossary/terms`
+  ```json
+  {
+    "en": "TRON Lightcycle / Run",
+    "es": "TRON Lightcycle / Run",
+    "category": "Attraction",
+    "keep_original": true,
+    "notes": "Tomorrowland coaster"
+  }
+  ```
+* **Delete Term:** `DELETE /api/glossary/terms/:termId`
+* **Sync to Cloud Storage & Translation API:** `POST http://localhost:8081/api/glossary/sync`
+
+---
+
 ## ⚙️ Environment Variables Reference
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `PROJECT_ID` | `disney-parks-live-translation` | Google Cloud Project ID (Argolis) |
+| `PROJECT_ID` | `your-gcp-project-id` | Your Google Cloud Project ID |
 | `LOCATION` | `us-central1` | Primary GCP Region for Cloud Run, Translation v3, and DLP |
 | `CHIRP_REGION` | `us` | Multi-region endpoint for Speech-to-Text v2 **Chirp 3 GA** |
 | `STT_MODEL` | `chirp_3` | Speech recognition model identifier (`chirp_3`, `latest_short`) |
 | `GLOSSARY_ID` | `disney-parks-glossary-en-es` | Cloud Translation API Advanced glossary resource ID |
-| `GLOSSARY_BUCKET` | `disney-parks-live-translation-glossaries` | Cloud Storage bucket storing Disney CSV glossaries |
+| `GLOSSARY_BUCKET` | `[PROJECT_ID]-glossaries` | Cloud Storage bucket storing Disney CSV glossaries |
 | `GEMINI_LIVE_MODEL` | `gemini-2.0-flash-exp` | Vertex AI Gemini Multimodal Live model |
 | `DEFAULT_VOICE` | `Aoede` | Default Gemini Live voice personality |
-
----
-
-## 📖 Disney Glossary & Brand Enforcement Rules
-
-The following terms are protected and automatically injected into every live session:
-
-| Disney Term | Category | Policy | Translation Rule |
-| :--- | :--- | :--- | :--- |
-| **Lightning Lane** | Service | 🔒 Preserve Brand | Keep as *Lightning Lane* |
-| **MagicBand+** | Merchandise | 🔒 Preserve Brand | Keep as *MagicBand+* |
-| **Cast Member** | Personnel | 🔄 Respectful Equivalent | Spanish: *Miembro del Elenco* / French: *Cast Member* |
-| **Rope Drop** | Concept | 🔄 Contextual | Spanish: *Apertura del parque* |
-| **Space Mountain** | Attraction | 🔒 Preserve Brand | Keep as *Space Mountain* |
-| **Rise of the Resistance** | Attraction | 🔒 Preserve Brand | Keep as *Star Wars: Rise of the Resistance* |
-| **Virtual Queue** | Service | 🔄 Localized | Spanish: *Fila Virtual* |
-| **Park Hopper** | Ticket | 🔒 Preserve Brand | Keep as *Boleto Park Hopper* |
-
----
-
-## 💻 Local Development with Docker Compose
-
-To run all 3 services locally:
-```bash
-# 1. Authenticate Application Default Credentials (ADC)
-gcloud auth application-default login
-
-# 2. Start all containers
-docker compose up --build
-```
-* **Web & Mobile Testbed:** `http://localhost:3000`
-* **Gemini Live Proxy (WS):** `ws://localhost:8080/live-translate`
-* **Translation Pipeline (Chirp 3 + DLP + MT + TTS):** `http://localhost:8081` (Swagger Docs: `http://localhost:8081/docs`)
 
