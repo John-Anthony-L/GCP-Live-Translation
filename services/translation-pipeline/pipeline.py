@@ -267,18 +267,22 @@ class DisneyTranslationPipeline:
         clean_text = html.unescape(text)
         synthesis_input = texttospeech.SynthesisInput(text=clean_text)
         
-        # Select natural Neural2 or Journey voice
-        voice_params = texttospeech.VoiceSelectionParams(
-            language_code=target_lang,
-            name=f"{target_lang}-Neural2-F" if "es" in target_lang else f"{target_lang}-Neural2-A",
-            ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
-        )
-
+        # Audio configuration: LINEAR16, 24kHz for ultra HD playback
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-            sample_rate_hertz=24000,
-            speaking_rate=1.05
+            sample_rate_hertz=24000
         )
+
+        # 1. Primary: Google Cloud Chirp 3 HD Voice (state-of-the-art conversational neural voice)
+        # Note: Chirp 3 HD uses expressive named voices such as Aoede, Achernar, Fenrir
+        chirp3_voice_name = f"{target_lang}-Chirp3-HD-Aoede"
+        voice_params = texttospeech.VoiceSelectionParams(
+            language_code=target_lang,
+            name=chirp3_voice_name
+        )
+
+        used_voice = chirp3_voice_name
+        audio_content = None
 
         try:
             response = self.tts_client.synthesize_speech(
@@ -287,24 +291,42 @@ class DisneyTranslationPipeline:
                 audio_config=audio_config
             )
             audio_content = response.audio_content
-        except Exception:
-            # Fallback to standard voice if neural voice is unavailable for locale
-            fallback_voice = texttospeech.VoiceSelectionParams(
-                language_code=target_lang,
-                ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
-            )
-            response = self.tts_client.synthesize_speech(
-                input=synthesis_input,
-                voice=fallback_voice,
-                audio_config=audio_config
-            )
-            audio_content = response.audio_content
+        except Exception as e_chirp:
+            # 2. Secondary fallback: Neural2 voice
+            neural2_voice_name = f"{target_lang}-Neural2-F" if "es" in target_lang else f"{target_lang}-Neural2-A"
+            used_voice = neural2_voice_name
+            try:
+                fallback_voice = texttospeech.VoiceSelectionParams(
+                    language_code=target_lang,
+                    name=neural2_voice_name,
+                    ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+                )
+                response = self.tts_client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=fallback_voice,
+                    audio_config=audio_config
+                )
+                audio_content = response.audio_content
+            except Exception:
+                # 3. Tertiary fallback: Standard voice
+                used_voice = f"{target_lang}-Standard"
+                standard_voice = texttospeech.VoiceSelectionParams(
+                    language_code=target_lang,
+                    ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+                )
+                response = self.tts_client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=standard_voice,
+                    audio_config=audio_config
+                )
+                audio_content = response.audio_content
 
         duration_ms = (time.time() - start_time) * 1000
         return {
             "audio_base64": base64.b64encode(audio_content).decode("utf-8"),
             "audio_bytes_length": len(audio_content),
             "sample_rate": 24000,
+            "voice": used_voice,
             "latency_ms": round(duration_ms, 2)
         }
 
