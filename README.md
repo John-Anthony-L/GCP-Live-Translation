@@ -1,23 +1,23 @@
-# 🏰 Disney Parks Live Translation POC (iOS & GCP)
+# 🏰 Disney Parks Live Translation POC (Google Cloud)
 
-A multi-container Proof of Concept (POC) evaluating **real-time live speech translation** for Walt Disney World & Disneyland Cast Members and International Guests, featuring **custom vocabulary and glossary injection** for Disney brand terms, attraction names, and park operations.
+A production-ready, multi-container Proof of Concept (POC) evaluating **real-time live speech translation** for Walt Disney World & Disneyland Cast Members and International Guests, featuring **custom vocabulary and glossary injection** for Disney brand terms, attraction names, and park operations.
 
-Deployed on Google Cloud Platform (Argolis project: `disney-parks-live-translation`).
+Powered by Google Cloud's **100% General Availability (GA)** enterprise stack: **Speech-to-Text v2 Chirp 3**, **Cloud Sensitive Data Protection (DLP)**, **Cloud Translation API Advanced v3**, and **Text-to-Speech Chirp 3 HD**.
 
 ---
 
-## 📊 Solution Comparison Matrix
+## 📊 Live Translation Architecture Comparison
 
-| Criteria | **Option 1: Gemini 2.0 Live API (Vertex AI)** 🌟 *(Recommended)* | **Option 2: Translation API Advanced v3 (Chirp 3)** | **Option 3: CX Agent Studio (CXAS)** |
-| :--- | :--- | :--- | :--- |
-| **Pipeline Nature** | **Native Speech-to-Speech (S2S)** streaming | **3-hop GA Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ TTS | **Agentic Conversational Bot** |
-| **Speech Latency** | ⚡ **400ms – 800ms** (Real-time simultaneous) | ⏳ **750ms – 1,400ms** (Chirp 3 STT + MT + TTS) | ⏳ **1,500ms – 3,500ms+** (Intent + Agent RAG) |
-| **STT Engine** | Built-in Gemini Multimodal Audio | **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** | Dialogflow CX Speech Recognizer |
-| **Glossary Injection** | **Contextual System Instruction Injection** (Adheres to brand rules, understands Disney context) | **100% Deterministic Cloud Glossary** (TSV/CSV exact dictionary lock) + Speech Adaptation | **Vertex AI Search Data Store RAG & Playbooks** |
-| **PII & Privacy** | Prompt-level safety filters | **Google Cloud Sensitive Data Protection (DLP)** real-time scrubbing | Dialogflow built-in redacting |
-| **Voice & Inflection** | **Natural human-like prosody**, emotion, tone | Synthetic Neural2 / Journey TTS | Synthetic Neural2 / Journey TTS |
-| **iOS Architecture** | Single bidirectional **WebSocket** (`URLSessionWebSocketTask`) | Multi-service orchestration (STT ➔ MT ➔ TTS) | Dialogflow CX Audio Sessions API |
-| **Best Use Case** | **Live Cast Member ↔ Guest In-Park Interpreter** | Park signage, mobile app text localization, strict deterministic compliance | Multilingual Park Concierge / FAQ bot with tool actions |
+| Architecture Pillar | **Enterprise Production Pipeline (Primary)** 🌟 | **Multimodal Live Preview (Experimental)** |
+| :--- | :--- | :--- |
+| **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS | **Speech-to-Speech (S2S)** Bidirectional WebSocket |
+| **Latency Profile** | ⚡ **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) | ⚡ **450ms – 850ms** (Simultaneous audio turns) |
+| **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Disney boost) | Gemini Live Audio Transcription / Gemini 3.5 Live |
+| **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, MagicBand UIDs, PINs) | Prompt-level safety filters |
+| **Disney Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Phrase Biasing | Contextual System Prompt injection |
+| **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) | Built-in Gemini Live audio personas |
+| **Compliance & Readiness** | 🔒 **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant | Preview features, non-deterministic phrasing |
+| **Primary Use Case** | **In-Park Cast Member ↔ Guest Countertops, Kiosks & Mobile Web** | Conversational dialogue exploration |
 
 ---
 
@@ -26,24 +26,24 @@ Deployed on Google Cloud Platform (Argolis project: `disney-parks-live-translati
 ```mermaid
 flowchart TD
     subgraph Client["Client Layer"]
-        Web["<b>Web Client (Browser)</b><br/>• Mic Audio Capture<br/>• Live Captions Display<br/>• Audio Playback"]
+        Web["<b>Web Client (Browser / Mobile Web)</b><br/>• Mic Audio Capture (16kHz PCM)<br/>• Live Dual Captions Display<br/>• FIFO Audio Playback Queue"]
     end
 
     subgraph Gateway["Ingress & Session Management"]
-        Proxy["<b>Gemini Live Proxy / WebSocket Hub</b><br/>(Cloud Run)"]
+        Proxy["<b>Gemini Live Proxy / WebSocket Gateway</b><br/>(Cloud Run)"]
     end
 
-    subgraph Pipeline["Translation & Safety Pipeline"]
+    subgraph Pipeline["Enterprise Translation & Safety Pipeline"]
         direction TB
-        STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA)<br/>• Cloud Speech (latest_short)<br/>• Gemini 3.5 Live"]
-        DLP["<b>2. Sensitive Data Protection</b><br/>(Cloud DLP / Redaction)<br/>• PCI-DSS & PII<br/>• MagicBand UID, PIN, Res IDs"]
-        Trans["<b>3. Translation & Glossary</b><br/>• Cloud Translation v3<br/>• Disney Parks Glossary Biasing"]
-        TTS["<b>4. Text-to-Speech (TTS)</b><br/>• Cloud TTS (Neural2 / Journey)<br/>• Multi-lingual Voices"]
+        STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA in us multi-region)<br/>• Disney Phrase Biasing (+20.0 Boost)<br/>• Cloud Speech v1 fallback (latest_short)"]
+        DLP["<b>2. Sensitive Data Protection (Cloud DLP)</b><br/>• Real-time PII & PCI-DSS Redaction<br/>• Disney IDs: MagicBand UID, PIN, Res #"]
+        Trans["<b>3. Translation & Brand Glossary</b><br/>• Cloud Translation API Advanced v3<br/>• Deterministic Disney Terms Enforcement"]
+        TTS["<b>4. Text-to-Speech (TTS)</b><br/>• Chirp 3 HD Voices (High Fidelity)<br/>• Latin American & Spain Spanish"]
     end
 
     subgraph Experience["Cast Member & Guest Output"]
-        TextOut["<b>Real-Time Dual Captions</b><br/>(Live Screen Display)"]
-        AudioOut["<b>Translated Audio Playback</b><br/>(Speaker / Headset)"]
+        TextOut["<b>Real-Time Dual Subtitles</b><br/>(Live Screen Display)"]
+        AudioOut["<b>Chirp 3 HD Audio Playback</b><br/>(Speaker / Headset)"]
     end
 
     %% Audio input flow
@@ -78,50 +78,36 @@ flowchart TD
 ## 📂 Repository Structure
 
 ```
-Disney-live-translation-POC/
+GCP-Live-Translation/
 ├── glossaries/
 │   ├── disney_parks_glossary.json      # Structured multi-language Disney terms, phonetics & rules
-│   └── disney_glossary_en_es.csv       # Cloud Translation API Advanced CSV glossary
+│   ├── disney_glossary_en_es.csv       # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
+│   └── disney_glossary_es_en.csv       # Cloud Translation API Advanced CSV glossary (ES ➔ EN)
 ├── services/
-│   ├── gemini-live-proxy/              # Service 1: Vertex AI Gemini 2.0 Live WebSocket Proxy (Node.js/TS)
-│   │   ├── src/
-│   │   │   ├── server.ts               # Express & WebSocket server
-│   │   │   ├── vertex_bidi_client.ts   # Vertex AI Live API client
-│   │   │   ├── glossary.ts             # Dynamic system instruction & glossary builder
-│   │   │   └── config.ts
-│   │   ├── Dockerfile
-│   │   └── package.json
-│   ├── translation-pipeline/           # Service 2: Production GA Pipeline (FastAPI: Chirp 3 + Cloud DLP + MT v3 + TTS)
-│   │   ├── main.py                     # FastAPI REST & WebSocket endpoints (Chirp 3 STT, DLP PII masking)
-│   │   ├── pipeline.py                 # Chirp 3 (Speech v2 GA) + Translation Advanced v3 + TTS orchestrator
+│   ├── translation-pipeline/           # Core Service: Production GA Pipeline (FastAPI)
+│   │   ├── main.py                     # FastAPI REST & WebSocket endpoints (/ws/stream-translate)
+│   │   ├── pipeline.py                 # Chirp 3 STT + Cloud DLP + Translation v3 + Chirp 3 HD TTS
 │   │   ├── glossary_helper.py          # GCS & Translation API Glossary manager
-│   │   ├── dlp_helper.py               # Google Cloud Sensitive Data Protection (DLP) manager
+│   │   ├── dlp_helper.py               # Cloud Sensitive Data Protection (DLP) manager
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   └── web-client/                     # Service 3: Interactive Web & Mobile Simulator Testbed
-│       ├── public/                     # HTML5, CSS, AudioWorklet client
-│       ├── server.js
-│       └── Dockerfile
-├── ios-app/                            # Native iOS Swift / SwiftUI Client
-│   └── DisneyLiveTranslate/
-│       ├── DisneyLiveTranslateApp.swift
-│       ├── Services/
-│       │   ├── AudioEngineManager.swift        # AVAudioEngine (16kHz in / 24kHz out)
-│       │   └── LiveTranslationWebSocket.swift  # Streaming WebSocket connection
-│       ├── Models/
-│       │   ├── TranslationSession.swift
-│       │   └── DisneyGlossary.swift
-│       └── Views/
-│           ├── ContentView.swift
-│           ├── LiveInterpreterView.swift
-│           ├── ComparisonBenchmarkView.swift
-│           └── GlossaryListView.swift
+│   ├── web-client/                     # Core Service: Interactive Web & Mobile Simulator Testbed
+│   │   ├── public/                     # HTML5, CSS, AudioWorklet client & Telemetry Terminal
+│   │   ├── server.js                   # Node/Express API with dynamic Glossary CRUD
+│   │   └── Dockerfile
+│   └── gemini-live-proxy/              # Supplementary Service: Multimodal Live WebSocket Gateway (Node.js/TS)
+│       ├── src/                        # WebSocket bridge and Vertex AI Live client
+│       ├── Dockerfile
+│       └── package.json
 ├── infra/
 │   ├── deploy.sh                       # One-click Cloud Run multi-container deployment
 │   ├── setup_glossary.sh               # Cloud Translation API Advanced glossary setup
 │   └── start_proxy.sh                  # Local proxy & development runner
-└── docker-compose.yml                  # Local development multi-container orchestration
+├── docker-compose.yml                  # Local development multi-container orchestration
+└── .env.example                        # Template environment variables for custom GCP projects
 ```
+
+> **Note on Native iOS App**: Experimental SwiftUI native client code is preserved on the dedicated [`ios-version`](https://github.com/John-Anthony-L/GCP-Live-Translation/tree/ios-version) git branch. The `main` branch is dedicated to the core web, pipeline, and containerized cloud services.
 
 ---
 
@@ -141,38 +127,31 @@ The script will automatically:
 1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `run`, `storage`, `artifactregistry`, `cloudbuild`).
 2. Create the Cloud Storage glossary bucket `gs://${PROJECT_ID}-glossaries`.
 3. Upload `disney_glossary_en_es.csv` and configure Translation API Advanced.
-4. Build and deploy **Gemini Live Proxy**, **Translation Pipeline** (configured with Chirp 3 GA and Cloud DLP), and **Web Client** containers to Cloud Run in `us-central1`.
+4. Build and deploy **Gemini Live Proxy**, **Translation Pipeline** (configured with Chirp 3 GA STT, Cloud DLP, and Chirp 3 HD TTS), and **Web Client** containers to Cloud Run in `us-central1`.
 5. Output live Cloud Run service URLs.
 
 ---
 
 ## 🧪 Testing the Live Translation POC
 
-### Option A: Gemini 2.0 Multimodal Live API (Web & iOS)
-Open the deployed `disney-live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop or **iOS Safari**:
-1. Select your target language pair (e.g., **English ⇄ Spanish** or **English ⇄ Portuguese**).
-2. Choose your Gemini voice personality (**Aoede**, **Puck**, etc.).
-3. Hold the microphone button and speak a Disney phrase:
+### Live 2-Way Translation Testbed (`http://localhost:3000`)
+Open the deployed `disney-live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop, tablet, or mobile browser:
+
+1. **Select Language Pair & Accent**:
+   - 🇲🇽 **English ⇄ Latin American Spanish (`es-US`)** *(Default)*
+   - 🇪🇸 **English ⇄ Spain Spanish (`es-ES`)**
+   - 🇧🇷 Portuguese, 🇫🇷 French, 🇯🇵 Japanese, 🇨🇳 Mandarin
+2. **Select Speech-to-Text Model**:
+   - 🎙️ **Chirp 3 (Speech v2 GA)** *(Recommended)*: High-accuracy foundational model with built-in neural denoiser and Disney phrase adaptation.
+   - ⚡ **Cloud Speech (`latest_short`)**: Ultra-fast single-utterance baseline model (< 10s commands).
+   - ✨ **Gemini 3.5 Live Transcribe**: Multimodal transcription preview.
+3. **Select Mode & Speak**:
+   - **Cast Member 🎤 / Guest 🌐 Push-to-Talk**: Hold or click to speak individual turns.
+   - **🎙️ Ambient 2-Way Live Stream**: Hands-free conversation mode where the system continuously listens, detects speech boundaries, redacts PII, translates, and plays back synthesized audio.
+4. **Try Sample Disney Phrases**:
    - *"Excuse me, where is the Lightning Lane entrance for Space Mountain?"*
    - *"Do I need a Virtual Queue for Star Wars: Rise of the Resistance?"*
-   - *"Where can I meet Mickey Mouse in Fantasyland?"*
-4. Experience real-time audio translation with Disney brand terminology preserved.
-
-### Option B: Native iOS App (Xcode)
-1. Open the `ios-app/` project in Xcode.
-2. In `Models/TranslationSession.swift`, update `serverBaseUrl` to your deployed Cloud Run WebSocket URL:
-   ```swift
-   @Published public var serverBaseUrl: String = "wss://<YOUR-CLOUD-RUN-URL>/live-translate"
-   ```
-3. Run on an iPhone simulator or physical iOS device.
-
-### Option C: 3-Hop GA Pipeline (Chirp 3 STT ➔ Cloud DLP ➔ MT v3 ➔ Neural TTS)
-For enterprise production environments requiring **100% General Availability (GA)**, PCI-DSS / COPPA compliance, and deterministic glossary enforcement:
-* **Speech-to-Text**: Powered by Google Cloud **Chirp 3 (`chirp_3`)** via Speech-to-Text API v2 in multi-region `us` (`us-speech.googleapis.com`). Includes **Speech Adaptation phrase sets** boosting Disney park terminology with a +20.0 score, automatic punctuation, and low-latency endpointing.
-* **Sensitive Data Protection (Cloud DLP)**: Intercepts and masks sensitive guest information (credit cards, reservation numbers, MagicBand+ UIDs, PINs) before transcripts reach the translation model or TTS audio engine.
-* **Machine Translation**: Cloud Translation API Advanced v3 with deterministic Cloud Storage Disney Glossary (`disney_glossary_en_es.csv`).
-* **Text-to-Speech**: Cloud Text-to-Speech high-fidelity Journey & Neural2 voices.
-* **Testing**: Connect via the Web Client or WebSocket endpoint at `WS /ws/stream-translate`.
+   - *"My reservation number is WDW-982341 and my PIN is 4821."* (Notice DLP automatically masks the reservation ID and PIN before translation and speech synthesis!)
 
 ---
 
