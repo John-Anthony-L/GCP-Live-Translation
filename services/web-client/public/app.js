@@ -35,6 +35,8 @@ const connectionStatus = document.getElementById('connectionStatus');
 const statusLabel = connectionStatus.querySelector('.status-label');
 const tabButtons = document.querySelectorAll('.tab-btn');
 const langPairSelect = document.getElementById('langPair');
+const sttModelSelect = document.getElementById('sttModelSelect');
+const sttModelSub = document.getElementById('sttModelSub');
 const personaVoiceSelect = document.getElementById('personaVoice');
 const continuousStreamToggle = document.getElementById('continuousStreamToggle');
 const streamModeHint = document.getElementById('streamModeHint');
@@ -171,6 +173,16 @@ function setupControls() {
     updateLanguageLabels();
     reconnectWebSocket();
   });
+
+  if (sttModelSelect) {
+    sttModelSelect.addEventListener('change', () => {
+      const model = sttModelSelect.value;
+      const modelText = sttModelSelect.options[sttModelSelect.selectedIndex].text;
+      if (sttModelSub) sttModelSub.innerText = model;
+      if (terminalSttMeta) terminalSttMeta.innerText = model;
+      addTerminalLog(`STT Engine changed to: ${modelText}`, 'system');
+    });
+  }
 
   personaVoiceSelect.addEventListener('change', () => {
     reconnectWebSocket();
@@ -486,6 +498,14 @@ async function startContinuousStream() {
   setLiveStatus('🎙️ Ambient 2-Way Stream Live (Listening...)', true);
 }
 
+function getLangPair() {
+  const val = langPairSelect.value;
+  const idx = val.indexOf('-');
+  const src = val.slice(0, idx);
+  const tgt = val.slice(idx + 1);
+  return [src, tgt];
+}
+
 function stopContinuousStream() {
   isContinuous = false;
   continuousStreamToggle.checked = false;
@@ -501,9 +521,10 @@ function stopContinuousStream() {
 }
 
 function updateLanguageLabels() {
-  const [src, tgt] = langPairSelect.value.split('-');
+  const [src, tgt] = getLangPair();
   const langNames = {
-    es: { name: 'Spanish', flag: '🇪🇸' },
+    es: { name: 'Spanish (LATAM)', flag: '🇲🇽' },
+    'es-ES': { name: 'Spanish (Spain)', flag: '🇪🇸' },
     pt: { name: 'Portuguese', flag: '🇧🇷' },
     fr: { name: 'French', flag: '🇫🇷' },
     ja: { name: 'Japanese', flag: '🇯🇵' },
@@ -555,7 +576,7 @@ function setupQuickScenarios() {
         lastSpeechStartTimestamp = Date.now();
         setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
         
-        const [src, tgt] = langPairSelect.value.split('-');
+        const [src, tgt] = getLangPair();
         const isCastMember = role === 'cast-member';
         
         socket.send(JSON.stringify({
@@ -584,7 +605,7 @@ function handleSendText() {
   if (socket && socket.readyState === WebSocket.OPEN) {
     lastSpeechStartTimestamp = Date.now();
     setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
-    const [src, tgt] = langPairSelect.value.split('-');
+    const [src, tgt] = getLangPair();
     socket.send(JSON.stringify({
       type: 'text',
       text,
@@ -671,12 +692,15 @@ async function connectWebSocket() {
         if (sttLatencyVal && data.stt_ms !== undefined) {
           sttLatencyVal.innerText = Math.round(data.stt_ms);
         }
+        if (sttModelSub && data.stt_model) {
+          sttModelSub.innerText = data.stt_model;
+        }
         if (terminalSttText) {
           terminalSttText.innerText = data.transcript ? `"${data.transcript}"` : '(No speech detected)';
-          terminalSttMeta.innerText = `${data.detectedLang || 'en-US'} • ${Math.round(data.stt_ms || 0)}ms`;
+          terminalSttMeta.innerText = `${data.stt_model || 'chirp_3'} • ${data.detectedLang || 'en-US'} • ${Math.round(data.stt_ms || 0)}ms`;
         }
         if (data.transcript) {
-          addTerminalLog(`STT Captured: "${data.transcript}" (${data.detectedLang || 'en-US'}, ${Math.round(data.stt_ms || 0)}ms)`, 'stt');
+          addTerminalLog(`STT Captured (${data.stt_model || 'chirp_3'}): "${data.transcript}" (${data.detectedLang || 'en-US'}, ${Math.round(data.stt_ms || 0)}ms)`, 'stt');
         }
         setLiveStatus('Scrubbing PII & Translating...', true);
       } else if (data.type === 'dlp_status') {
@@ -962,13 +986,14 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
   recordedChunks = [];
 
   const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
+  const selectedModel = sttModelSelect ? sttModelSelect.value : 'chirp_3';
   if (terminalSttText) {
     terminalSttText.innerText = '⏳ Transcribing audio turn...';
-    terminalSttMeta.innerText = 'gemini-3.5-transcribe';
+    terminalSttMeta.innerText = selectedModel;
   }
 
   if (socket && socket.readyState === WebSocket.OPEN) {
-    const [srcLang, tgtLang] = langPairSelect.value.split('-');
+    const [srcLang, tgtLang] = getLangPair();
     const isGuest = role === 'guest';
     
     socket.send(JSON.stringify({
@@ -978,6 +1003,7 @@ function dispatchContinuousUtterance(role = currentSpeakerRole) {
       speakerRole: role,
       sourceLang: isGuest ? tgtLang : srcLang,
       targetLang: isGuest ? srcLang : tgtLang,
+      sttModel: selectedModel,
       useGlossary: true,
       useDlp: dlpMasterEnabled,
       dlpInfoTypes: Array.from(activeDlpInfoTypes)

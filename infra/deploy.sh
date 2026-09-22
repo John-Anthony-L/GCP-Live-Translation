@@ -73,7 +73,7 @@ gcloud run deploy disney-translation-pipeline \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},GLOSSARY_ID=disney-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME}" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=us,STT_MODEL=chirp_3,GLOSSARY_ID=disney-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME}" \
     --timeout 3600 \
     --cpu 2 \
     --memory 2Gi

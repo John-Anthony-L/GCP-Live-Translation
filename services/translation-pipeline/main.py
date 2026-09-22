@@ -27,9 +27,23 @@ pipeline = DisneyTranslationPipeline()
 PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
+def resolve_locale(lang: str) -> str:
+    """Resolve language identifier to standard STT & TTS BCP-47 locale code."""
+    l = lang.lower()
+    if l in ["en", "en-us"]:
+        return "en-US"
+    if l in ["es", "es-us", "es-419", "es-latam"]:
+        return "es-US"  # Latin America & US Spanish
+    if l in ["es-es", "es-spain"]:
+        return "es-ES"  # European Spanish
+    if "-" in lang:
+        parts = lang.split("-")
+        return f"{parts[0].lower()}-{parts[1].upper()}"
+    return f"{lang}-{lang.upper()}"
+
 class StreamingSTTWorker:
     """
-    Standard Cloud Speech Streaming Worker (Speech v1p1beta1 / v2 Chirp 2).
+    Standard Cloud Speech Streaming Worker (Speech v1p1beta1 / v2 Chirp 3).
     Includes real-time Cloud DLP Sensitive Data Protection and PII Scrubbing.
     """
     def __init__(
@@ -81,14 +95,14 @@ class StreamingSTTWorker:
     async def _run_stream(self):
         try:
             if self.speaker_role == "guest":
-                stt_lang = f"{self.tgt_lang}-US" if self.tgt_lang in ["en", "es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
+                stt_lang = resolve_locale(self.tgt_lang)
                 alt_langs = None
             elif self.speaker_role == "ambient":
                 stt_lang = "en-US"
-                target_stt = f"{self.tgt_lang}-US" if self.tgt_lang in ["es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
+                target_stt = resolve_locale(self.tgt_lang)
                 alt_langs = [target_stt]
             else:
-                stt_lang = f"{self.src_lang}-US" if self.src_lang in ["en", "es"] else f"{self.src_lang}-{self.src_lang.upper()}"
+                stt_lang = resolve_locale(self.src_lang)
                 alt_langs = None
 
             print(f"[StreamingSTT] Starting stream: lang={stt_lang}, alt={alt_langs}, role={self.speaker_role}, dlp={self.use_dlp}", flush=True)
@@ -159,7 +173,7 @@ class StreamingSTTWorker:
                         "dlp_applied": dlp_res["pii_detected"],
                         "confidence": result.alternatives[0].confidence,
                         "stt_ms": stt_time,
-                        "stt_model": "gemini-3.5-transcribe-streaming",
+                        "stt_model": "chirp_3 (GA Speech Generation)",
                         "speakerRole": cur_role,
                         "detectedLang": detected,
                         "is_final": True
@@ -451,10 +465,11 @@ def create_stream_worker(
     speaker_role: str,
     use_glossary: bool,
     use_dlp: bool = True,
-    dlp_info_types: Optional[List[str]] = None
+    dlp_info_types: Optional[List[str]] = None,
+    stt_model: Optional[str] = None
 ):
-    stt_engine = os.getenv("STT_ENGINE", "gemini-3.5-transcribe-live-preview")
-    if "gemini" in stt_engine.lower() or "live" in stt_engine.lower():
+    stt_engine = stt_model or os.getenv("STT_MODEL", "chirp_3")
+    if "gemini" in stt_engine.lower():
         return GeminiLiveTranscribeWorker(
             websocket=websocket,
             src_lang=src,
@@ -489,6 +504,7 @@ class AudioTranslateRequest(BaseModel):
     target_lang: str = "es"
     use_glossary: bool = True
     model: Optional[str] = None
+    stt_model: Optional[str] = "chirp_3"
     use_dlp: bool = True
     dlp_info_types: Optional[List[str]] = None
 
@@ -503,7 +519,7 @@ def root():
         "service": "Disney Parks Live Translation Advanced Pipeline",
         "status": "online",
         "models": {
-            "speech_to_text": os.getenv("STT_MODEL", "gemini-3.5-transcribe-live-preview"),
+            "speech_to_text": os.getenv("STT_MODEL", "chirp_3"),
             "data_loss_prevention": "Google Cloud Sensitive Data Protection (DLP)",
             "machine_translation": os.getenv("TRANSLATION_MODEL", "general/translation-llm"),
             "text_to_speech": "Neural2 / Journey High Fidelity"
@@ -527,7 +543,7 @@ def health():
         "service": "translation-pipeline",
         "project_id": os.getenv("PROJECT_ID", "disney-parks-live-translation"),
         "location": os.getenv("LOCATION", "us-central1"),
-        "stt_model": os.getenv("STT_MODEL", "gemini-3.5-transcribe-live-preview"),
+        "stt_model": os.getenv("STT_MODEL", "chirp_3"),
         "dlp_enabled": True,
         "translation_model": os.getenv("TRANSLATION_MODEL", "general/translation-llm")
     }
@@ -567,11 +583,17 @@ def translate_text(req: TextTranslateRequest):
 @app.post("/api/translate-audio")
 def translate_audio(req: AudioTranslateRequest):
     pcm_bytes = base64.b64decode(req.audio_base64)
-    stt_res = pipeline.transcribe_audio(
-        pcm_bytes,
-        sample_rate=16000,
-        lang_code=f"{req.source_lang}-US" if req.source_lang in ["en", "es"] else f"{req.source_lang}-{req.source_lang.upper()}"
-    )
+    model = req.stt_model or os.getenv("STT_MODEL", "chirp_3")
+    stt_lang = f"{req.source_lang}-US" if req.source_lang in ["en", "es"] else f"{req.source_lang}-{req.source_lang.upper()}"
+    if model in ["chirp_3", "chirp_2", "chirp"]:
+        stt_res = pipeline.transcribe_chirp3(pcm_bytes, lang_code=stt_lang)
+    else:
+        stt_res = pipeline.transcribe_audio(
+            pcm_bytes,
+            sample_rate=16000,
+            lang_code=stt_lang,
+            model=model
+        )
     raw_transcript = stt_res.get("transcript", "")
     dlp_res = dlp_manager.sanitize_text(
         text=raw_transcript,
@@ -707,26 +729,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # Determine language config based on speaker role
                 if speaker_role == "guest":
-                    stt_lang = f"{tgt}-US" if tgt in ["en", "es"] else f"{tgt}-{tgt.upper()}"
-                    src_lang = tgt
-                    tgt_lang = src
+                    stt_lang = resolve_locale(tgt)
+                    src_lang = tgt.split("-")[0].lower()
+                    tgt_lang = src.split("-")[0].lower()
                     alt_langs = None
                 elif speaker_role == "ambient":
                     stt_lang = "en-US"
-                    target_stt = f"{tgt}-US" if tgt in ["es"] else f"{tgt}-{tgt.upper()}"
+                    target_stt = resolve_locale(tgt)
                     alt_langs = [target_stt]
-                    src_lang = src
-                    tgt_lang = tgt
+                    src_lang = src.split("-")[0].lower()
+                    tgt_lang = tgt.split("-")[0].lower()
                 else: # Cast Member
-                    stt_lang = f"{src}-US" if src in ["en", "es"] else f"{src}-{src.upper()}"
-                    src_lang = src
-                    tgt_lang = tgt
+                    stt_lang = resolve_locale(src)
+                    src_lang = src.split("-")[0].lower()
+                    tgt_lang = tgt.split("-")[0].lower()
                     alt_langs = None
 
-                req_model = data.get("sttModel") or os.getenv("STT_MODEL", "latest_short")
-                # 1. Real-time STT with Chirp 2 or latest_short
-                if req_model == "chirp_2" and not alt_langs:
-                    stt_res = pipeline.transcribe_chirp2(pcm_bytes, lang_code=stt_lang)
+                req_model = data.get("sttModel") or os.getenv("STT_MODEL", "chirp_3")
+                # 1. Real-time STT with Chirp 3 or latest_short
+                if req_model in ["chirp_3", "chirp_2", "chirp"] and not alt_langs:
+                    stt_res = pipeline.transcribe_chirp3(pcm_bytes, lang_code=stt_lang)
                 else:
                     stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang, alternative_lang_codes=alt_langs)
                 
@@ -764,7 +786,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "dlp_applied": dlp_res["pii_detected"],
                     "confidence": stt_res["confidence"],
                     "stt_ms": stt_res["latency_ms"],
-                    "stt_model": stt_res.get("stt_model", "gemini-3.5-transcribe"),
+                    "stt_model": stt_res.get("stt_model", "chirp_3 (GA Speech Generation)"),
                     "speakerRole": effective_role,
                     "detectedLang": stt_res.get("detected_lang")
                 })
@@ -801,7 +823,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
                 # 4. High Fidelity Speech Synthesis
-                tts_lang_code = f"{tgt_lang}-US" if tgt_lang in ["en", "es"] else f"{tgt_lang}-{tgt_lang.upper()}"
+                active_target = tgt if effective_role in ["cast-member", "ambient"] else src
+                tts_lang_code = resolve_locale(active_target)
                 tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
                 
                 total_latency = round(stt_res["latency_ms"] + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)

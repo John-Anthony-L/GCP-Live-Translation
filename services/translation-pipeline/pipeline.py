@@ -7,10 +7,12 @@ from google.cloud import speech_v1p1beta1 as speech
 from google.cloud import speech_v2
 from google.cloud import translate_v3 as translate
 from google.cloud import texttospeech_v1 as texttospeech
+from google.api_core.client_options import ClientOptions
 from glossary_helper import get_glossary_config
 
 PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
+CHIRP_REGION = os.getenv("CHIRP_REGION", "us")
 
 def trim_pcm_silence(pcm_data: bytes, threshold: int = 350) -> bytes:
     """Trim leading and trailing silence from 16-bit mono PCM to dramatically speed up STT processing."""
@@ -44,13 +46,21 @@ class DisneyTranslationPipeline:
     def __init__(self):
         self.speech_client = speech.SpeechClient()
         self.speech_async_client = speech.SpeechAsyncClient()
-        self.speech_v2_client = speech_v2.SpeechClient()
-        self.speech_v2_async_client = speech_v2.SpeechAsyncClient()
+        self.chirp_region = CHIRP_REGION
+        self.speech_v2_client = speech_v2.SpeechClient(
+            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com")
+        )
+        self.speech_v2_async_client = speech_v2.SpeechAsyncClient(
+            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com")
+        )
         self.translate_client = translate.TranslationServiceClient()
         self.tts_client = texttospeech.TextToSpeechClient()
         
-        self.chirp2_en_recognizer = f"projects/{PROJECT_ID}/locations/{LOCATION}/recognizers/disney-live-recognizer"
-        self.chirp2_es_recognizer = f"projects/{PROJECT_ID}/locations/{LOCATION}/recognizers/disney-live-recognizer-es"
+        self.chirp3_en_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/disney-live-recognizer"
+        self.chirp3_es_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/disney-live-recognizer-es"
+        # Backward compatibility aliases
+        self.chirp2_en_recognizer = self.chirp3_en_recognizer
+        self.chirp2_es_recognizer = self.chirp3_es_recognizer
         
         self.disney_phrases = [
             "Lightning Lane", "MagicBand+", "Cast Member", "Space Mountain",
@@ -65,7 +75,7 @@ class DisneyTranslationPipeline:
 
     def get_streaming_config(self, lang_code: str = "en-US", alternative_lang_codes: List[str] = None, model: str = None) -> speech.StreamingRecognitionConfig:
         stt_model = model or os.getenv("STT_MODEL", "latest_short")
-        if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp"]:
+        if stt_model in ["gemini-3.5-transcribe", "gemini-transcribe", "chirp", "chirp_2", "chirp_3"]:
             stt_model = "latest_short"
 
         # Use default model when multi-language auto detection is active in streaming
@@ -96,7 +106,7 @@ class DisneyTranslationPipeline:
         # 1. Fast silence trimming to cut payload and model inference time
         trimmed_pcm = trim_pcm_silence(pcm_data)
         
-        stt_model = model or os.getenv("STT_MODEL", "gemini-3.5-transcribe-live-preview")
+        stt_model = model or os.getenv("STT_MODEL", "chirp_3")
         speech_model = "latest_short" if "gemini" in stt_model.lower() or "chirp" in stt_model.lower() else stt_model
 
         config_kwargs = {
@@ -136,13 +146,34 @@ class DisneyTranslationPipeline:
             "latency_ms": round(duration_ms, 2)
         }
 
-    def transcribe_chirp2(self, pcm_data: bytes, lang_code: str = "en-US") -> Dict[str, Any]:
+    def transcribe_chirp3(self, pcm_data: bytes, lang_code: str = "en-US") -> Dict[str, Any]:
         start_time = time.time()
-        recognizer = self.chirp2_es_recognizer if "es" in lang_code.lower() else self.chirp2_en_recognizer
         trimmed_pcm = trim_pcm_silence(pcm_data)
         
+        # Build speech adaptation phrase set for Disney terminology
+        adaptation = speech_v2.SpeechAdaptation(
+            phrase_sets=[
+                speech_v2.SpeechAdaptation.AdaptationPhraseSet(
+                    inline_phrase_set=speech_v2.PhraseSet(
+                        phrases=[{"value": phrase, "boost": 20.0} for phrase in self.disney_phrases]
+                    )
+                )
+            ]
+        )
+        
+        config = speech_v2.RecognitionConfig(
+            auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
+            language_codes=[lang_code],
+            model="chirp_3",
+            features=speech_v2.RecognitionFeatures(
+                enable_automatic_punctuation=True,
+            ),
+            adaptation=adaptation,
+        )
+        
         request = speech_v2.RecognizeRequest(
-            recognizer=recognizer,
+            recognizer=f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/_",
+            config=config,
             content=trimmed_pcm,
         )
         try:
@@ -151,8 +182,11 @@ class DisneyTranslationPipeline:
             
             transcript = ""
             confidence = 0.0
+            detected_lang = lang_code
             if response.results:
                 result = response.results[0]
+                if hasattr(result, "language_code") and result.language_code:
+                    detected_lang = result.language_code
                 if result.alternatives:
                     transcript = result.alternatives[0].transcript
                     confidence = result.alternatives[0].confidence
@@ -160,13 +194,17 @@ class DisneyTranslationPipeline:
             return {
                 "transcript": transcript,
                 "confidence": round(confidence, 3),
-                "stt_model": "chirp_2 (Gemini Speech Generation)",
-                "detected_lang": lang_code,
+                "stt_model": "chirp_3 (GA Speech Generation)",
+                "detected_lang": detected_lang,
                 "latency_ms": round(duration_ms, 2)
             }
         except Exception as e:
-            print(f"[Pipeline] Chirp2 error: {e}, falling back to latest_short", flush=True)
+            print(f"[Pipeline] Chirp3 error: {e}, falling back to standard transcribe", flush=True)
             return self.transcribe_audio(pcm_data, lang_code=lang_code)
+
+    def transcribe_chirp2(self, pcm_data: bytes, lang_code: str = "en-US") -> Dict[str, Any]:
+        """Backward compatibility alias pointing to Chirp 3."""
+        return self.transcribe_chirp3(pcm_data, lang_code=lang_code)
 
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "es", use_glossary: bool = True, model: str = None) -> Dict[str, Any]:
         start_time = time.time()
@@ -305,7 +343,7 @@ class DisneyTranslationPipeline:
                 "tts_ms": tts_result["latency_ms"]
             },
             "models": {
-                "stt_model": stt_result.get("stt_model", "gemini-3.5-transcribe"),
+                "stt_model": stt_result.get("stt_model", "chirp_3"),
                 "translation_model": mt_result.get("model", "general/translation-llm"),
                 "tts_voice": tts_lang_code
             },

@@ -28,6 +28,8 @@ services:
       - PORT=8081
       - PROJECT_ID=disney-parks-live-translation
       - LOCATION=us-central1
+      - CHIRP_REGION=us
+      - STT_MODEL=chirp_3
       - GLOSSARY_ID=disney-parks-glossary-en-es
       - GLOSSARY_BUCKET=disney-parks-live-translation-glossaries
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json

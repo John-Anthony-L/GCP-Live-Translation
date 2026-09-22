@@ -31,7 +31,8 @@ public class TranslationSession: ObservableObject {
     
     public let availableLanguages: [LanguageOption] = [
         LanguageOption(code: "en", name: "English (US)"),
-        LanguageOption(code: "es", name: "Spanish (Español)"),
+        LanguageOption(code: "es", name: "Spanish (Latin America - LATAM)"),
+        LanguageOption(code: "es-ES", name: "Spanish (Spain - Castellano)"),
         LanguageOption(code: "pt", name: "Portuguese (Português)"),
         LanguageOption(code: "fr", name: "French (Français)"),
         LanguageOption(code: "ja", name: "Japanese (日本語)"),

@@ -37,7 +37,7 @@
       <button class="tab-btn active" data-mode="translation-pipeline">
         <span class="tab-icon">🏰</span>
         <span class="tab-title">2-Way Live Translation</span>
-        <span class="tab-subtitle">Gemini 3.5 Transcribe ➔ DLP ➔ MT v3 ➔ Neural TTS</span>
+        <span class="tab-subtitle">Chirp 3 (GA) ➔ DLP ➔ MT v3 ➔ Neural TTS</span>
       </button>
       <button class="tab-btn" data-mode="dlp">
         <span class="tab-icon">🛡️</span>
@@ -60,11 +60,21 @@
           <div class="control-group">
             <label for="langPair">Target Language Pair</label>
             <select id="langPair" class="custom-select">
-              <option value="en-es" selected>🇺🇸 English ⇄ 🇪🇸 Spanish (Español)</option>
-              <option value="en-pt">🇺🇸 English ⇄ 🇧🇷 Portuguese (Português)</option>
-              <option value="en-fr">🇺🇸 English ⇄ 🇫🇷 French (Français)</option>
-              <option value="en-ja">🇺🇸 English ⇄ 🇯🇵 Japanese (日本語)</option>
-              <option value="en-zh">🇺🇸 English ⇄ 🇨🇳 Mandarin (中文)</option>
+              <option value="en-es" selected>🇲🇽 English ⇄ Latin American Spanish (Español LATAM)</option>
+              <option value="en-es-ES">🇪🇸 English ⇄ Spain Spanish (Castellano)</option>
+              <option value="en-pt">🇧🇷 English ⇄ Portuguese (Português)</option>
+              <option value="en-fr">🇫🇷 English ⇄ French (Français)</option>
+              <option value="en-ja">🇯🇵 English ⇄ Japanese (日本語)</option>
+              <option value="en-zh">🇨🇳 English ⇄ Mandarin (中文)</option>
+            </select>
+          </div>
+
+          <div class="control-group">
+            <label for="sttModelSelect">Speech-to-Text Model</label>
+            <select id="sttModelSelect" class="custom-select">
+              <option value="chirp_3" selected>🎙️ Chirp 3 (Speech v2 GA)</option>
+              <option value="gemini-3.5-transcribe">✨ Gemini 3.5 Live Transcribe</option>
+              <option value="latest_short">⚡ Cloud Speech (latest_short)</option>
             </select>
           </div>
 
@@ -114,7 +124,7 @@
               <span id="sttLatencyValue" class="metric-val">--</span>
               <span class="metric-unit">ms</span>
             </div>
-            <span class="metric-sub" id="sttModelSub">gemini-3.5-transcribe</span>
+            <span class="metric-sub" id="sttModelSub">chirp_3 (GA)</span>
           </div>
 
           <div class="metric-card" id="dlpMetricCard">

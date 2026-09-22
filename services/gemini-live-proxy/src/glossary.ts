@@ -78,8 +78,9 @@ export function buildSystemInstruction(
   const brandRulesText = glossary.brand_rules.map((r, i) => `${i + 1}. ${r}`).join('\n');
 
   const languageMap: Record<string, string> = {
-    en: 'English',
+    en: 'English (US)',
     es: 'Spanish (Latin America / Neutral)',
+    'es-es': 'Spanish (Spain / Castilian)',
     pt: 'Portuguese (Brazil)',
     fr: 'French',
     ja: 'Japanese',
@@ -88,8 +89,10 @@ export function buildSystemInstruction(
     it: 'Italian'
   };
 
-  const srcName = languageMap[sourceLang.toLowerCase().slice(0, 2)] || sourceLang;
-  const tgtName = languageMap[targetCode] || targetLang;
+  const srcCode = sourceLang.toLowerCase();
+  const tgtCode = targetLang.toLowerCase();
+  const srcName = languageMap[srcCode] || languageMap[srcCode.slice(0, 2)] || sourceLang;
+  const tgtName = languageMap[tgtCode] || languageMap[tgtCode.slice(0, 2)] || targetLang;
 
   return `You are a real-time bilingual simultaneous live interpreter for Walt Disney World & Disneyland Parks, assisting Disney Cast Members and International Guests.
 
