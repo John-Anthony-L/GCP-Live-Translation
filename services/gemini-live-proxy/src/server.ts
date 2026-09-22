@@ -23,7 +23,7 @@ app.use((req, res, next) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    service: 'disney-gemini-live-proxy',
+    service: 'gemini-live-proxy',
     projectId: config.projectId,
     location: config.location,
     model: config.model
@@ -72,7 +72,7 @@ wss.on('connection', async (clientWs: WebSocket, req) => {
   let lastAudioSentTimestamp = 0;
 
   let isFallbackMode = false;
-  const PIPELINE_URL = process.env.TRANSLATION_PIPELINE_URL || 'https://disney-translation-pipeline-749294031240.us-central1.run.app';
+  const PIPELINE_URL = process.env.TRANSLATION_PIPELINE_URL || 'http://localhost:8092';
 
   try {
     await vertexClient.connect(systemInstruction, voice, {
@@ -309,7 +309,7 @@ wss.on('connection', async (clientWs: WebSocket, req) => {
 
 httpServer.listen(config.port, () => {
   console.log(`=======================================================`);
-  console.log(`✨ Disney Live Translation - Gemini Live Proxy Started ✨`);
+  console.log(`✨ Enterprise Live Translation - Gemini Live Proxy Started ✨`);
   console.log(`Port: ${config.port}`);
   console.log(`GCP Project: ${config.projectId}`);
   console.log(`Region: ${config.location}`);

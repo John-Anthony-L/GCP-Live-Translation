@@ -3,9 +3,9 @@ import json
 from google.cloud import translate_v3 as translate
 from google.cloud import storage
 
-PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
+PROJECT_ID = os.getenv("PROJECT_ID", "gcp-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
-GLOSSARY_ID = os.getenv("GLOSSARY_ID", "disney-parks-glossary-en-es")
+GLOSSARY_ID = os.getenv("GLOSSARY_ID", "brand-parks-glossary-en-es")
 BUCKET_NAME = os.getenv("GLOSSARY_BUCKET", f"{PROJECT_ID}-glossary")
 
 def create_or_update_gcs_glossary(csv_path: str) -> str:
@@ -16,9 +16,9 @@ def create_or_update_gcs_glossary(csv_path: str) -> str:
     except Exception:
         bucket = storage_client.create_bucket(BUCKET_NAME, location=LOCATION)
 
-    blob = bucket.blob("disney_glossary_en_es.csv")
+    blob = bucket.blob("brand_glossary_en_es.csv")
     blob.upload_from_filename(csv_path)
-    gcs_uri = f"gs://{BUCKET_NAME}/disney_glossary_en_es.csv"
+    gcs_uri = f"gs://{BUCKET_NAME}/brand_glossary_en_es.csv"
     print(f"[GlossaryHelper] Uploaded glossary to {gcs_uri}")
     return gcs_uri
 
@@ -63,11 +63,14 @@ def get_glossary_config(source_lang="en", target_lang="es"):
     src = source_lang.lower().split("-")[0]
     tgt = target_lang.lower().split("-")[0]
 
+    base_glossary = os.getenv("GLOSSARY_ID", "brand-parks-glossary-en-es")
     glossary_id = None
     if src == "en" and tgt == "es":
-        glossary_id = "disney-parks-glossary-en-es"
+        glossary_id = base_glossary
     elif src == "es" and tgt == "en":
-        glossary_id = "disney-parks-glossary-es-en"
+        glossary_id = base_glossary.replace("en-es", "es-en")
+    else:
+        glossary_id = f"brand-glossary-{src}-{tgt}"
 
     if not glossary_id:
         return None

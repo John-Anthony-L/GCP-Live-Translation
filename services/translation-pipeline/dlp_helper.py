@@ -7,10 +7,10 @@ try:
 except Exception:
     dlp_v2 = None
 
-PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
+PROJECT_ID = os.getenv("PROJECT_ID", "your-gcp-project-id")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
-# Standard Disney & Privacy InfoType Catalog
+# Standard Enterprise & Privacy InfoType Catalog
 DLP_INFO_TYPE_CATALOG = {
     "CREDIT_CARD_NUMBER": {
         "name": "CREDIT_CARD_NUMBER",
@@ -57,34 +57,34 @@ DLP_INFO_TYPE_CATALOG = {
         "placeholder": "[PASSPORT_REDACTED]",
         "defaultEnabled": True
     },
-    "DISNEY_RESERVATION_ID": {
-        "name": "DISNEY_RESERVATION_ID",
-        "displayName": "Disney Reservation IDs",
-        "category": "Disney Brand Custom",
-        "icon": "🏰",
-        "description": "Walt Disney World, Disneyland, and Disney Cruise Line reservation numbers (e.g. WDW-982341, DLR-83921)",
-        "placeholder": "[DISNEY_RESERVATION_REDACTED]",
+    "RESERVATION_CONFIRMATION_ID": {
+        "name": "RESERVATION_CONFIRMATION_ID",
+        "displayName": "Reservation & Booking IDs",
+        "category": "Hospitality & Guest Identifiers",
+        "icon": "🎫",
+        "description": "Resort, hotel, and park booking confirmation numbers (e.g. RES-982341, CONF-83921)",
+        "placeholder": "[RESERVATION_ID_REDACTED]",
         "defaultEnabled": True,
         "isCustom": True,
-        "regex": r"(?:WDW|DLR|DISNEY|RES|CONF)[-#\s]?\d{5,10}"
+        "regex": r"(?:RES|RESV|BKG|CONF|BOOKING|WDW|DLR)[-#\s]?\d{5,10}"
     },
-    "MAGICBAND_UID": {
-        "name": "MAGICBAND_UID",
-        "displayName": "MagicBand+ Hardware UID",
-        "category": "Disney Brand Custom",
-        "icon": "🪄",
-        "description": "MagicBand+ RFID / NFC serial numbers and hardware identifiers (e.g. MB-A1B2C3D4)",
-        "placeholder": "[MAGICBAND_UID_REDACTED]",
+    "SMART_WRISTBAND_UID": {
+        "name": "SMART_WRISTBAND_UID",
+        "displayName": "Smart Wristband / RFID UID",
+        "category": "Hospitality & Guest Identifiers",
+        "icon": "📡",
+        "description": "Smart wearable RFID / NFC serial numbers and hardware identifiers (e.g. WB-A1B2C3D4)",
+        "placeholder": "[WRISTBAND_UID_REDACTED]",
         "defaultEnabled": True,
         "isCustom": True,
-        "regex": r"(?:MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}"
+        "regex": r"(?:WB|BAND|RFID|MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}"
     },
-    "DISNEY_PIN": {
-        "name": "DISNEY_PIN",
-        "displayName": "Disney Account & Resort PINs",
-        "category": "Disney Brand Custom",
+    "ACCOUNT_SECURITY_PIN": {
+        "name": "ACCOUNT_SECURITY_PIN",
+        "displayName": "Account & Room Security PINs",
+        "category": "Hospitality & Guest Identifiers",
         "icon": "🔑",
-        "description": "4-to-6 digit security PINs used for MyDisneyExperience, hotel room door unlock, and park charging",
+        "description": "4-to-6 digit security PINs used for guest verification, room door access, and payment authorizations",
         "placeholder": "[PIN_REDACTED]",
         "defaultEnabled": True,
         "isCustom": True,
@@ -92,9 +92,14 @@ DLP_INFO_TYPE_CATALOG = {
     }
 }
 
-class DisneyDLPManager:
+# Compatibility aliases
+DLP_INFO_TYPE_CATALOG["DISNEY_RESERVATION_ID"] = DLP_INFO_TYPE_CATALOG["RESERVATION_CONFIRMATION_ID"]
+DLP_INFO_TYPE_CATALOG["MAGICBAND_UID"] = DLP_INFO_TYPE_CATALOG["SMART_WRISTBAND_UID"]
+DLP_INFO_TYPE_CATALOG["DISNEY_PIN"] = DLP_INFO_TYPE_CATALOG["ACCOUNT_SECURITY_PIN"]
+
+class LiveTranslationDLPManager:
     """
-    Cloud Sensitive Data Protection (DLP) Service for Disney Parks.
+    Cloud Sensitive Data Protection (DLP) Service for Enterprise Live Translation.
     Provides real-time inspection, tokenization, and redaction with customizable InfoType rules.
     """
     def __init__(self, project_id: str = PROJECT_ID, location: str = LOCATION):
@@ -105,10 +110,17 @@ class DisneyDLPManager:
         try:
             self.dlp_client = dlp_v2.DlpServiceClient()
         except Exception as e:
-            print(f"[DisneyDLP] Could not initialize DlpServiceClient ({e}). Using local regex engine.", flush=True)
+            print(f"[LiveTranslationDLP] Could not initialize DlpServiceClient ({e}). Using local regex engine.", flush=True)
 
     def get_catalog(self) -> List[Dict[str, Any]]:
-        return list(DLP_INFO_TYPE_CATALOG.values())
+        # Return unique entries (avoiding duplicate aliases in catalog list)
+        seen = set()
+        unique_catalog = []
+        for key in ["CREDIT_CARD_NUMBER", "EMAIL_ADDRESS", "PHONE_NUMBER", "PERSON_NAME", "US_PASSPORT", "RESERVATION_CONFIRMATION_ID", "SMART_WRISTBAND_UID", "ACCOUNT_SECURITY_PIN"]:
+            if key in DLP_INFO_TYPE_CATALOG and key not in seen:
+                seen.add(key)
+                unique_catalog.append(DLP_INFO_TYPE_CATALOG[key])
+        return unique_catalog
 
     def sanitize_text(
         self,
@@ -147,7 +159,7 @@ class DisneyDLPManager:
         if active_info_types is None:
             active_info_types = [k for k, v in DLP_INFO_TYPE_CATALOG.items() if v.get("defaultEnabled", True)]
 
-        # 1. First run fast local custom Disney regex detectors
+        # 1. First run fast local custom enterprise regex detectors
         sanitized = text
         findings = []
 
@@ -224,7 +236,7 @@ class DisneyDLPManager:
                             "placeholder": meta.get("placeholder", f"[{t_name}]")
                         })
             except Exception as dlp_err:
-                print(f"[DisneyDLP] Cloud DLP API error ({dlp_err}), applying local regex fallback...", flush=True)
+                print(f"[LiveDLP] Cloud DLP API error ({dlp_err}), applying local regex fallback...", flush=True)
                 # Local fallback regexes for standard types
                 if "CREDIT_CARD_NUMBER" in std_types:
                     cc_pat = re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b|\b\d{15,16}\b")
@@ -276,4 +288,5 @@ class DisneyDLPManager:
             "latency_ms": round(duration_ms, 2)
         }
 
-dlp_manager = DisneyDLPManager()
+DisneyDLPManager = LiveTranslationDLPManager
+dlp_manager = LiveTranslationDLPManager()

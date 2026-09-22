@@ -9,12 +9,12 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
-      - PROJECT_ID=${PROJECT_ID:-disney-parks-live-translation}
+      - PROJECT_ID=${PROJECT_ID:-your-gcp-project-id}
       - LOCATION=${LOCATION:-us-central1}
       - CHIRP_REGION=${CHIRP_REGION:-us}
       - STT_MODEL=${STT_MODEL:-chirp_3}
-      - GLOSSARY_ID=${GLOSSARY_ID:-disney-parks-glossary-en-es}
-      - GLOSSARY_BUCKET=${GLOSSARY_BUCKET:-disney-parks-live-translation-glossaries}
+      - GLOSSARY_ID=${GLOSSARY_ID:-brand-parks-glossary-en-es}
+      - GLOSSARY_BUCKET=${GLOSSARY_BUCKET:-your-gcp-project-id-glossaries}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
     volumes:
       - ~/.config/gcloud/application_default_credentials.json:/app/service-account.json:ro

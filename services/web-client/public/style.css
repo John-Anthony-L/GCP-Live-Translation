@@ -736,6 +736,47 @@ input[type="checkbox"]:checked + .toggle-slider::before {
   white-space: nowrap;
 }
 
+.glossary-lang-filter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.lang-filter-label {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.glossary-lang-select {
+  padding: 8px 12px;
+  background: #0f1c3d;
+  border: 1px solid rgba(0, 114, 210, 0.4);
+  border-radius: 8px;
+  color: #f8fafc;
+  font-size: 0.8rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.glossary-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-langs {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Modal styling */
 .glossary-modal {
   position: fixed;
@@ -868,64 +909,169 @@ input[type="checkbox"]:checked + .toggle-slider::before {
   filter: brightness(1.15);
 }
 
+.form-section-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 12px 0 8px 0;
+  padding-top: 8px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #90caf9;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
 .glossary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
 }
 
 .glossary-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 12px;
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   position: relative;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .glossary-card:hover {
   border-color: rgba(0, 114, 210, 0.6);
   transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
 
 .glossary-card-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .term-en {
   font-weight: 700;
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   color: #fff;
+  line-height: 1.25;
 }
 
 .term-category {
   font-size: 0.65rem;
-  background: rgba(0, 114, 210, 0.3);
+  background: rgba(0, 114, 210, 0.25);
   color: #90caf9;
-  padding: 2px 6px;
-  border-radius: 4px;
+  border: 1px solid rgba(0, 114, 210, 0.35);
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 
-.term-target {
-  font-size: 0.85rem;
+.term-lang-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0;
+}
+
+.lang-pill {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+}
+
+.lang-pill.present {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.lang-pill.missing {
+  background: rgba(255, 255, 255, 0.04);
+  color: #64748b;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  opacity: 0.6;
+}
+
+.term-translations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(10, 17, 40, 0.5);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.translation-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.trans-lang-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  min-width: 52px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.trans-lang-tag.active {
+  background: rgba(0, 114, 210, 0.3);
+  color: #60a5fa;
+  border: 1px solid rgba(0, 114, 210, 0.4);
+}
+
+.trans-text {
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
+.term-target-focus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 114, 210, 0.12);
+  border: 1px solid rgba(0, 114, 210, 0.25);
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.term-target-value {
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--gold-accent);
 }
 
+.other-translations-hint {
+  font-size: 0.68rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
 .term-notes {
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
+  line-height: 1.35;
 }
 
 .glossary-card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 6px;
+  margin-top: 4px;
   padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }

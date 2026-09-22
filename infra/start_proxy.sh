@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# Disney Parks Live Translation - Cloud Run Port-Forwarding / Proxy Manager
-# target: disney-parks-live-translation (Argolis GCP)
+# Enterprise Live Translation - Cloud Run Port-Forwarding / Proxy Manager
 # ==============================================================================
 
-PROJECT_ID="disney-parks-live-translation"
-REGION="us-central1"
+PROJECT_ID="${PROJECT_ID:-your-gcp-project-id}"
+REGION="${REGION:-us-central1}"
 
 echo "======================================================================"
-echo "🏰 Starting Secure Local Port-Forwarding to Cloud Run Services..."
+echo "🌐 Starting Secure Local Port-Forwarding to Cloud Run Services..."
 echo "Project: ${PROJECT_ID}"
 echo "Region:  ${REGION}"
 echo "======================================================================"
@@ -22,21 +21,21 @@ echo "Press Ctrl+C to stop all proxies."
 echo "======================================================================"
 
 # Start Proxy 1: Web Client (Port 3000)
-gcloud run services proxy disney-live-web-client \
+gcloud run services proxy live-web-client \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
     --port=3000 &
 PID_WEB=$!
 
 # Start Proxy 2: Gemini Live Proxy (Port 8090)
-gcloud run services proxy disney-gemini-live-proxy \
+gcloud run services proxy gemini-live-proxy \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
     --port=8090 &
 PID_PROXY=$!
 
 # Start Proxy 3: Translation Pipeline (Port 8092)
-gcloud run services proxy disney-translation-pipeline \
+gcloud run services proxy live-translation-pipeline \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
     --port=8092 &

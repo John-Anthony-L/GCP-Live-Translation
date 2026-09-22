@@ -1,12 +1,12 @@
 {
   "version": "1.0",
-  "name": "Disney Parks Live Translation Terminology & Brand Guide",
+  "name": "Enterprise Theme Park & Hospitality Live Translation Terminology & Brand Guide",
   "brand_rules": [
-    "Attraction names must generally remain in their recognized Disney official names (e.g. 'Space Mountain', 'Star Wars: Rise of the Resistance', 'Haunted Mansion') unless an official localized brand name exists.",
-    "Do NOT translate patented or trademarked Disney product names such as 'MagicBand+', 'Lightning Lane', 'Genie+', 'Memory Maker', 'PhotoPass', 'Disney Band+'.",
-    "Disney Cast Member terminology must use respectful localized equivalents (e.g. Spanish: 'Miembro del Elenco', Portuguese: 'Membro do Elenco', French: 'Membre de l\\'équipe / Cast Member', Japanese: 'キャストメンバー').",
-    "Park concepts like 'Rope Drop' should be translated contextually (e.g. Spanish: 'Apertura del parque / Entrada a primera hora').",
-    "Maintain the magical, cheerful, and polite Disney Guest Service tone in all translations."
+    "Attraction and entertainment venue names must generally remain in their recognized official brand names (e.g. 'Space Mountain', 'Star Wars: Rise of the Resistance', 'Haunted Mansion') unless an official localized brand name exists.",
+    "Do NOT translate trademarked product and service names such as 'MagicBand+', 'Lightning Lane', 'Genie+', 'Memory Maker', 'PhotoPass', 'Smart Band+'.",
+    "Staff and host terminology must use respectful localized equivalents (e.g. Spanish: 'Embajador / Miembro del Personal', Portuguese: 'Membro da Equipe', French: 'Membre de l'équipe', Japanese: 'キャストメンバー / スタッフ').",
+    "Park and resort concepts like 'Rope Drop' should be translated contextually (e.g. Spanish: 'Apertura del parque / Entrada a primera hora').",
+    "Maintain a welcoming, professional, and cheerful guest hospitality tone in all translations."
   ],
   "terms": [
     {
@@ -22,7 +22,7 @@
         "ja": "ライトニング・レーン",
         "zh": "闪电通道 (Lightning Lane)"
       },
-      "notes": "Disney express queue service. Do not translate literally."
+      "notes": "Express queue service. Do not translate literally."
     },
     {
       "term_id": "magicband_plus",
@@ -51,7 +51,7 @@
         "ja": "キャストメンバー",
         "zh": "演职人员 (Cast Member)"
       },
-      "notes": "Disney park employee."
+      "notes": "Theme park / resort staff member."
     },
     {
       "term_id": "guest",
@@ -65,7 +65,7 @@
         "ja": "ゲスト",
         "zh": "游客 (Guest)"
       },
-      "notes": "Disney visitor / customer."
+      "notes": "Resort visitor / theme park guest."
     },
     {
       "term_id": "rope_drop",
@@ -195,15 +195,15 @@
     },
     {
       "term_id": "photopass",
-      "en": "Disney PhotoPass",
+      "en": "PhotoPass",
       "category": "Service",
       "keep_original": true,
       "translations": {
-        "es": "Disney PhotoPass",
-        "pt": "Disney PhotoPass",
-        "fr": "Disney PhotoPass",
-        "ja": "ディズニー・フォトパス",
-        "zh": "迪士尼乐拍通 (PhotoPass)"
+        "es": "PhotoPass",
+        "pt": "PhotoPass",
+        "fr": "PhotoPass",
+        "ja": "フォトパス",
+        "zh": "乐拍通 (PhotoPass)"
       },
       "notes": "Professional park photography service."
     },
@@ -275,7 +275,7 @@
         "ja": "キャラクターグリーティング",
         "zh": "角色互动见面会"
       },
-      "notes": "Meeting Disney characters."
+      "notes": "Meeting themed characters."
     }
   ]
 }

@@ -10,7 +10,7 @@ from google.cloud import texttospeech_v1 as texttospeech
 from google.api_core.client_options import ClientOptions
 from glossary_helper import get_glossary_config
 
-PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
+PROJECT_ID = os.getenv("PROJECT_ID", "gcp-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
 CHIRP_REGION = os.getenv("CHIRP_REGION", "us")
 
@@ -42,7 +42,7 @@ def trim_pcm_silence(pcm_data: bytes, threshold: int = 350) -> bytes:
     except Exception:
         return pcm_data
 
-class DisneyTranslationPipeline:
+class LiveTranslationPipeline:
     def __init__(self):
         self.speech_client = speech.SpeechClient()
         self.speech_async_client = speech.SpeechAsyncClient()
@@ -56,20 +56,21 @@ class DisneyTranslationPipeline:
         self.translate_client = translate.TranslationServiceClient()
         self.tts_client = texttospeech.TextToSpeechClient()
         
-        self.chirp3_en_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/disney-live-recognizer"
-        self.chirp3_es_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/disney-live-recognizer-es"
+        self.chirp3_en_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/live-translation-recognizer"
+        self.chirp3_es_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/live-translation-recognizer-es"
         # Backward compatibility aliases
         self.chirp2_en_recognizer = self.chirp3_en_recognizer
         self.chirp2_es_recognizer = self.chirp3_es_recognizer
         
-        self.disney_phrases = [
+        self.brand_phrases = [
             "Lightning Lane", "MagicBand+", "Cast Member", "Space Mountain",
             "Rise of the Resistance", "Haunted Mansion", "Big Thunder Mountain",
             "Galaxy's Edge", "Fantasyland", "PhotoPass", "Rider Switch",
-            "Single Rider", "Tiana's Bayou Adventure", "Rope Drop", "Park Hopper"
+            "Single Rider", "Tiana's Bayou Adventure", "Rope Drop", "Park Hopper", "Express Pass"
         ]
+        self.disney_phrases = self.brand_phrases
         self.cached_speech_context = speech.SpeechContext(
-            phrases=self.disney_phrases,
+            phrases=self.brand_phrases,
             boost=20.0
         )
 
@@ -150,12 +151,12 @@ class DisneyTranslationPipeline:
         start_time = time.time()
         trimmed_pcm = trim_pcm_silence(pcm_data)
         
-        # Build speech adaptation phrase set for Disney terminology
+        # Build speech adaptation phrase set for brand terminology
         adaptation = speech_v2.SpeechAdaptation(
             phrase_sets=[
                 speech_v2.SpeechAdaptation.AdaptationPhraseSet(
                     inline_phrase_set=speech_v2.PhraseSet(
-                        phrases=[{"value": phrase, "boost": 20.0} for phrase in self.disney_phrases]
+                        phrases=[{"value": phrase, "boost": 20.0} for phrase in self.brand_phrases]
                     )
                 )
             ]
@@ -371,3 +372,5 @@ class DisneyTranslationPipeline:
             },
             "glossary_applied": mt_result["glossary_applied"]
         }
+
+DisneyTranslationPipeline = LiveTranslationPipeline

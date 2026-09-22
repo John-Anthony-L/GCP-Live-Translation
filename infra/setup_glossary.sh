@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_ID="${PROJECT_ID:-disney-parks-live-translation}"
+PROJECT_ID="${PROJECT_ID:-your-gcp-project-id}"
 LOCATION="${LOCATION:-us-central1}"
-GLOSSARY_ID="disney-parks-glossary-en-es"
+GLOSSARY_ID="${GLOSSARY_ID:-brand-parks-glossary-en-es}"
 BUCKET_NAME="${PROJECT_ID}-glossaries"
+
+CSV_FILE="brand_glossary_en_es.csv"
+if [ ! -f "glossaries/${CSV_FILE}" ]; then
+  CSV_FILE="disney_glossary_en_es.csv"
+fi
 
 echo "Configuring Cloud Translation API Advanced Glossary: ${GLOSSARY_ID}..."
 
 # Upload CSV to GCS using gcloud storage
-gcloud storage cp glossaries/disney_glossary_en_es.csv "gs://${BUCKET_NAME}/disney_glossary_en_es.csv"
+gcloud storage cp "glossaries/${CSV_FILE}" "gs://${BUCKET_NAME}/${CSV_FILE}"
 
 # Call GCP Translation API v3 to register glossary
 TOKEN=$(gcloud auth print-access-token)
@@ -27,7 +32,7 @@ curl -X POST \
     },
     "inputConfig": {
       "gcsSource": {
-        "inputUri": "gs://'"${BUCKET_NAME}"'/disney_glossary_en_es.csv"
+        "inputUri": "gs://'"${BUCKET_NAME}"'/'"${CSV_FILE}"'"
       }
     }
   }'

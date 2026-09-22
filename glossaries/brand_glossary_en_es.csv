@@ -1,11 +1,11 @@
-es,en
+en,es
 Lightning Lane,Lightning Lane
 MagicBand+,MagicBand+
-Miembro del Elenco,Cast Member
-Visitante,Guest
-Apertura del parque,Rope Drop
-Fila Virtual,Virtual Queue
-Boleto Park Hopper,Park Hopper
+Cast Member,Miembro del Elenco
+Guest,Visitante
+Rope Drop,Apertura del parque
+Virtual Queue,Fila Virtual
+Park Hopper,Boleto Park Hopper
 Space Mountain,Space Mountain
 Star Wars: Rise of the Resistance,Star Wars: Rise of the Resistance
 Haunted Mansion,Haunted Mansion
@@ -13,13 +13,15 @@ Big Thunder Mountain Railroad,Big Thunder Mountain Railroad
 Star Wars: Galaxy's Edge,Star Wars: Galaxy's Edge
 Fantasyland,Fantasyland
 PhotoPass,PhotoPass
-Cambio de Acompañante (Rider Switch),Rider Switch
-Fila para Pasajero Solitario (Single Rider),Single Rider Line
+Rider Switch,Cambio de Acompañante (Rider Switch)
+Single Rider Line,Fila para Pasajero Solitario (Single Rider)
 World Showcase,World Showcase
 Tiana's Bayou Adventure,Tiana's Bayou Adventure
-Encuentro con Personajes,Character Meet and Greet
+Character Meet and Greet,Encuentro con Personajes
 Genie+,Genie+
 FastPass,FastPass
 Memory Maker,Memory Maker
 Smart Band+,Smart Band+
 Imagineer,Imagineer
+
+Express Pass VIP,Pase VIP Express

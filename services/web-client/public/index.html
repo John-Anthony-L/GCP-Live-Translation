@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Disney Parks 2-Way Live Translation | Argolis GCP</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <title>Enterprise 2-Way Live Translation | Google Cloud</title>
+  <link rel="stylesheet" href="style.css?v=5">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,10 +14,10 @@
     <!-- Header -->
     <header class="app-header">
       <div class="brand">
-        <span class="brand-sparkle">✨</span>
+        <span class="brand-sparkle">🌐</span>
         <div class="brand-titles">
-          <h1>Disney Parks 2-Way Live Translation</h1>
-          <span class="badge">Argolis GCP • disney-parks-live-translation</span>
+          <h1>Enterprise 2-Way Live Translation</h1>
+          <span class="badge">Google Cloud • Chirp 3 GA • Cloud DLP</span>
         </div>
       </div>
       <div class="header-status">
@@ -35,19 +35,19 @@
     <!-- Main Navigation / Mode Tabs -->
     <nav class="mode-tabs">
       <button class="tab-btn active" data-mode="translation-pipeline">
-        <span class="tab-icon">🏰</span>
+        <span class="tab-icon">🎙️</span>
         <span class="tab-title">2-Way Live Translation</span>
         <span class="tab-subtitle">Chirp 3 (GA) ➔ DLP ➔ MT v3 ➔ Chirp 3 HD TTS</span>
       </button>
       <button class="tab-btn" data-mode="dlp">
         <span class="tab-icon">🛡️</span>
         <span class="tab-title">Data Loss Protection (DLP)</span>
-        <span class="tab-subtitle">PCI-DSS, Guest PII & Disney Brand Rules</span>
+        <span class="tab-subtitle">PCI-DSS, Guest PII & Brand Security Rules</span>
       </button>
       <button class="tab-btn" data-mode="glossary">
         <span class="tab-icon">📖</span>
-        <span class="tab-title">Disney Brand Glossary</span>
-        <span class="tab-subtitle">24 Enforced Park & Attraction Terms</span>
+        <span class="tab-title">Brand Glossary & Languages</span>
+        <span class="tab-subtitle">Enforced Multi-Language Terminology</span>
       </button>
     </nav>
 
@@ -167,16 +167,16 @@
           
           <div class="chat-feed" id="chatFeed">
             <div class="chat-welcome">
-              <span class="sparkle-icon">✨</span>
-              <p>Welcome to the <strong>Disney Parks Live Translation</strong> testbed.</p>
-              <p class="sub-hint">Use the dual buttons below: hold <strong>Cast Member</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Real-time Cloud DLP will mask PII & credit cards before translation and synthesis!</p>
+              <span class="sparkle-icon">🌐</span>
+              <p>Welcome to the <strong>Enterprise Live Translation</strong> testbed.</p>
+              <p class="sub-hint">Use the dual buttons below: hold <strong>Team Host</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Real-time Cloud DLP will mask PII & credit cards before translation and synthesis!</p>
             </div>
           </div>
         </div>
 
-        <!-- Quick Disney Test Scenarios -->
+        <!-- Quick Test Scenarios -->
         <div class="quick-scenarios-card">
-          <span class="scenarios-title">🎯 Quick Disney & PII Test Scenarios (Click to Run):</span>
+          <span class="scenarios-title">🎯 Quick Translation & PII Scenarios (Click to Run):</span>
           <div class="scenarios-buttons">
             <button class="scenario-chip" data-lang="en" data-text="Where is the Lightning Lane entrance for Space Mountain in Tomorrowland?">
               🇺🇸 Space Mountain & Lightning Lane
@@ -184,20 +184,20 @@
             <button class="scenario-chip" data-lang="es" data-text="¿A qué hora es el Rope Drop para Star Wars: Rise of the Resistance?">
               🇪🇸 Rope Drop & Rise of the Resistance
             </button>
-            <button class="scenario-chip scenario-pii" data-lang="en" data-text="Hi, my reservation is WDW-982341 and my credit card is 4532 8912 3456 7890.">
+            <button class="scenario-chip scenario-pii" data-lang="en" data-text="Hi, my reservation confirmation is RES-982341 and my credit card is 4532 8912 3456 7890.">
               💳 PII Test: Credit Card & Reservation ID
             </button>
-            <button class="scenario-chip scenario-pii" data-lang="es" data-text="Hola, quiero vincular mi MagicBand MB-A1B2C3D4 con el teléfono 407-555-0142 y PIN 9821.">
-              🪄 PII Test: MagicBand+ & PIN
+            <button class="scenario-chip scenario-pii" data-lang="es" data-text="Hola, quiero vincular mi pulsera RFID WB-A1B2C3D4 con el teléfono 407-555-0142 y PIN 9821.">
+              📡 PII Test: Smart Wristband & PIN
             </button>
           </div>
         </div>
 
         <!-- Dual Push-to-Talk 2-Way Audio Action Bar -->
         <div class="action-bar-2way">
-          <!-- Cast Member (English) Speak Button -->
+          <!-- Team Host (English) Speak Button -->
           <div class="speaker-col">
-            <span class="speaker-label cast-member-label">Cast Member (English)</span>
+            <span class="speaker-label cast-member-label">Team Host (English)</span>
             <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to Speak English">
               <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -303,7 +303,7 @@
           <div class="dlp-header-top">
             <div class="dlp-header-titles">
               <h2>🛡️ Google Cloud Sensitive Data Protection (DLP)</h2>
-              <p>Real-time redaction of PCI-DSS financial data, Guest Contact PII, and Disney Custom Identifiers (MagicBand+ & Reservation IDs) before translation and audio synthesis.</p>
+              <p>Real-time redaction of PCI-DSS financial data, Guest Contact PII, and Enterprise Custom Identifiers (Smart Wristband RFID & Reservation IDs) before translation and audio synthesis.</p>
             </div>
             <div class="dlp-status-box" id="dlpMasterStatusBox">
               <span class="dlp-status-icon">🛡️</span>
@@ -330,7 +330,7 @@
                 🔒 Public Park Kiosk
               </button>
               <button class="preset-btn active" id="presetConcierge" title="PCI & Custom Masked, Guest Names Allowed for Greetings">
-                🏰 Front Desk & Concierge
+                🏨 Front Desk & Concierge
               </button>
               <button class="preset-btn warning" id="presetPhone" title="Bypass DLP for Phone Booking Agents">
                 📞 Over-The-Phone Booking (Bypass)
@@ -364,14 +364,14 @@
           <!-- Sample Preset Prompts -->
           <div class="sandbox-samples">
             <span class="samples-title">Quick Samples:</span>
-            <button class="sample-chip" data-sample="Hello Cast Member, my name is Maria and my Disney reservation is WDW-982341. My Visa is 4532-8912-3456-7890 with exp 12/28.">
+            <button class="sample-chip" data-sample="Hello, my name is Maria and my reservation confirmation is RES-982341. My Visa is 4532-8912-3456-7890 with exp 12/28.">
               💳 Full Guest Booking & Credit Card
             </button>
-            <button class="sample-chip" data-sample="Can you help link my MagicBand MB-A1B2C3D4 to my account? My email is guest.disney@example.com and phone is 407-555-0199.">
-              🪄 MagicBand+ & Contact Info
+            <button class="sample-chip" data-sample="Can you help link my Smart Wristband WB-A1B2C3D4 to my account? My email is guest@example.com and phone is 407-555-0199.">
+              📡 Smart Wristband & Contact Info
             </button>
             <button class="sample-chip" data-sample="My room security PIN is 7842 and my passport number is A12345678.">
-              🔑 Disney Room PIN & Passport
+              🔑 Room Security PIN & Passport
             </button>
           </div>
 
@@ -406,13 +406,13 @@
         </div>
       </section>
 
-      <!-- Section 3: Disney Glossary Reference & Management -->
+      <!-- Section 3: Enterprise Brand Glossary Reference & Management -->
       <section id="glossarySection" class="view-section">
         <div class="glossary-header-card">
           <div class="glossary-header-top">
             <div>
-              <h2>🏰 Disney Parks Glossary & Brand Injection</h2>
-              <p>These terms and attractions are enforced in the live translation prompt and Google Cloud Translation API to preserve Disney brand equity.</p>
+              <h2>🌐 Enterprise Brand Glossary & Language Guide</h2>
+              <p>These brand names, attractions, and service concepts are preserved across languages in translation prompts and Cloud Translation API Advanced v3.</p>
             </div>
             <button id="openAddTermModalBtn" class="btn-primary-action">
               <span>➕ Add New Term</span>
@@ -420,10 +420,22 @@
           </div>
           <div class="glossary-toolbar">
             <div class="glossary-search-bar">
-              <input type="text" id="glossarySearch" placeholder="Search Disney attractions, services, characters...">
+              <input type="text" id="glossarySearch" placeholder="Search brand terms, attractions, services across languages...">
+            </div>
+            <div class="glossary-lang-filter-wrap">
+              <label for="glossaryLangFilter" class="lang-filter-label">🌐 View Language:</label>
+              <select id="glossaryLangFilter" class="custom-select glossary-lang-select">
+                <option value="all">🌍 All Languages (Overview)</option>
+                <option value="es">🇪🇸 Spanish (ES)</option>
+                <option value="pt">🇧🇷 Portuguese (PT)</option>
+                <option value="fr">🇫🇷 French (FR)</option>
+                <option value="ja">🇯🇵 Japanese (JA)</option>
+                <option value="zh">🇨🇳 Mandarin Chinese (ZH)</option>
+              </select>
             </div>
             <div class="glossary-stats">
               <span id="glossaryCountBadge" class="badge-count">24 Terms Active</span>
+              <span id="glossaryLangsBadge" class="badge-langs">5 Languages (ES, PT, FR, JA, ZH)</span>
             </div>
           </div>
         </div>
@@ -432,46 +444,74 @@
         <div id="addTermModal" class="glossary-modal" style="display: none;">
           <div class="glossary-modal-content">
             <div class="modal-header">
-              <h3>➕ Add New Disney Protected Term</h3>
+              <h3>➕ Add New Protected Brand Term</h3>
               <button id="closeAddTermModalBtn" class="modal-close">&times;</button>
             </div>
             <form id="addTermForm" class="glossary-form">
               <div class="form-row">
                 <div class="form-group">
-                  <label for="newTermEn">English Term / Attraction / Concept *</label>
-                  <input type="text" id="newTermEn" placeholder="e.g. TRON Lightcycle / Run" required>
+                  <label for="newTermEn">English Term / Attraction / Service *</label>
+                  <input type="text" id="newTermEn" placeholder="e.g. Express Pass Plus" required>
                 </div>
-                <div class="form-group">
-                  <label for="newTermEs">Spanish Translation / Preferred Term *</label>
-                  <input type="text" id="newTermEs" placeholder="e.g. TRON Lightcycle / Run" required>
-                </div>
-              </div>
-
-              <div class="form-row">
                 <div class="form-group">
                   <label for="newTermCategory">Category</label>
                   <select id="newTermCategory" class="custom-select">
                     <option value="Attraction" selected>Attraction / Ride</option>
                     <option value="Service">Park Service / Ticketing</option>
-                    <option value="Personnel">Cast Member / Role</option>
-                    <option value="Park Concept">Park Concept / Routine</option>
-                    <option value="Food & Beverage">Food & Beverage</option>
-                    <option value="Merchandise">Merchandise / Tech</option>
+                    <option value="Personnel">Host / Staff Role</option>
+                    <option value="Concept">Park Concept / Routine</option>
+                    <option value="Food & Beverage">Dining / Food & Beverage</option>
+                    <option value="Merchandise">Merchandise / Tech Wearable</option>
                     <option value="Custom">Custom Brand Term</option>
                   </select>
                 </div>
+              </div>
+
+              <div class="form-row">
                 <div class="form-group checkbox-group-inline">
                   <label class="toggle-switch">
                     <input type="checkbox" id="newTermKeepOriginal" checked>
                     <span class="slider"></span>
                   </label>
-                  <span class="toggle-label-text">🔒 Preserve English Brand Name</span>
+                  <span class="toggle-label-text">🔒 Preserve Brand Name Across Languages</span>
                 </div>
               </div>
 
-              <div class="form-group">
-                <label for="newTermNotes">Context / Guidelines / Notes</label>
-                <input type="text" id="newTermNotes" placeholder="e.g. Magic Kingdom high-speed coaster in Tomorrowland">
+              <div class="form-section-divider">
+                <span>🌐 Multi-Language Target Translations</span>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="newTermEs">🇪🇸 Spanish (ES) *</label>
+                  <input type="text" id="newTermEs" placeholder="Spanish translation" required>
+                </div>
+                <div class="form-group">
+                  <label for="newTermPt">🇧🇷 Portuguese (PT)</label>
+                  <input type="text" id="newTermPt" placeholder="Portuguese translation (optional)">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="newTermFr">🇫🇷 French (FR)</label>
+                  <input type="text" id="newTermFr" placeholder="French translation (optional)">
+                </div>
+                <div class="form-group">
+                  <label for="newTermJa">🇯🇵 Japanese (JA)</label>
+                  <input type="text" id="newTermJa" placeholder="Japanese translation (optional)">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="newTermZh">🇨🇳 Mandarin Chinese (ZH)</label>
+                  <input type="text" id="newTermZh" placeholder="Chinese translation (optional)">
+                </div>
+                <div class="form-group">
+                  <label for="newTermNotes">Context / Guidelines / Notes</label>
+                  <input type="text" id="newTermNotes" placeholder="e.g. VIP priority queue service">
+                </div>
               </div>
 
               <div class="form-actions">
@@ -490,10 +530,10 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <span>Disney Parks Live Translation POC • Google Cloud Argolis • Project: <code>disney-parks-live-translation</code> • Cloud DLP Active</span>
+      <span>Enterprise Live Translation POC • Google Cloud Platform • Cloud DLP Active</span>
     </footer>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

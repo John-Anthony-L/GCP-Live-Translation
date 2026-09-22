@@ -27,6 +27,11 @@ export function loadGlossary(): GlossaryData {
 
   // Attempt to load from multiple potential locations
   const potentialPaths = [
+    path.resolve(process.cwd(), 'enterprise_parks_glossary.json'),
+    path.resolve(process.cwd(), 'glossaries/enterprise_parks_glossary.json'),
+    path.resolve(__dirname, '../../../glossaries/enterprise_parks_glossary.json'),
+    path.resolve(__dirname, '../glossaries/enterprise_parks_glossary.json'),
+    path.resolve(__dirname, './enterprise_parks_glossary.json'),
     path.resolve(process.cwd(), 'disney_parks_glossary.json'),
     path.resolve(process.cwd(), 'glossaries/disney_parks_glossary.json'),
     path.resolve(__dirname, '../../../glossaries/disney_parks_glossary.json'),
@@ -45,11 +50,11 @@ export function loadGlossary(): GlossaryData {
   // Fallback default if file not found
   cachedGlossary = {
     version: '1.0',
-    name: 'Disney Parks Live Translation (Default Fallback)',
+    name: 'Enterprise Parks Live Translation (Default Fallback)',
     brand_rules: [
-      "Keep attraction and brand names in English (e.g., 'Lightning Lane', 'MagicBand+', 'Space Mountain', 'Rise of the Resistance').",
-      "Translate Cast Member respectfully ('Miembro del Elenco' in Spanish).",
-      "Maintain a polite, helpful, magical Disney service tone."
+      "Keep attraction and brand product names in original English (e.g., 'Lightning Express', 'MagicWristband+', 'Space Mountain', 'Star Voyager').",
+      "Translate Team Member respectfully ('Miembro del Equipo' in Spanish).",
+      "Maintain a polite, helpful, world-class guest hospitality service tone."
     ],
     terms: []
   };
@@ -94,7 +99,7 @@ export function buildSystemInstruction(
   const srcName = languageMap[srcCode] || languageMap[srcCode.slice(0, 2)] || sourceLang;
   const tgtName = languageMap[tgtCode] || languageMap[tgtCode.slice(0, 2)] || targetLang;
 
-  return `You are a real-time bilingual simultaneous live interpreter for Walt Disney World & Disneyland Parks, assisting Disney Cast Members and International Guests.
+  return `You are a real-time bilingual simultaneous live interpreter for Enterprise Theme Parks & Resorts, assisting Team Members and International Guests.
 
 LANGUAGE PAIR: ${srcName} <---> ${tgtName}
 
@@ -105,11 +110,11 @@ PRIMARY TASK:
 - Deliver ONLY the direct translation in natural spoken audio.
 - DO NOT add conversational filler, meta-announcements, intros (e.g. "The guest says..."), or your own conversational responses.
 
-DISNEY BRAND TONE & PERSONALITY:
-- Warm, polite, hospitable, and magical—reflecting Disney's world-class guest service.
+BRAND TONE & SERVICE EXCELLENCE:
+- Warm, polite, hospitable, and professional—reflecting world-class guest service.
 - Maintain the original speaker's emotional inflection, urgency, and enthusiasm.
 
-DISNEY PARKS GLOSSARY & VOCABULARY ENFORCEMENT:
+ENTERPRISE GLOSSARY & VOCABULARY ENFORCEMENT:
 ${brandRulesText}
 
 SPECIFIC VOCABULARY MAPPINGS:

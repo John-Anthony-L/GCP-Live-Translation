@@ -20,44 +20,60 @@ app.get('/config.json', (req, res) => {
 
 // Helper to get glossary path
 const getGlossaryPath = () => {
+  const rootEnterprise = path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json');
+  if (fs.existsSync(rootEnterprise)) return rootEnterprise;
   const rootGlossary = path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json');
   if (fs.existsSync(rootGlossary)) return rootGlossary;
+  const localEnterprise = path.join(__dirname, 'enterprise_parks_glossary.json');
+  if (fs.existsSync(localEnterprise)) return localEnterprise;
   return path.join(__dirname, 'disney_parks_glossary.json');
 };
 
-// Disney Glossary API endpoints
+// Enterprise Brand Glossary API endpoints
 app.get('/api/glossary', (req, res) => {
   try {
     const glossaryPath = getGlossaryPath();
     const raw = fs.readFileSync(glossaryPath, 'utf8');
     res.json(JSON.parse(raw));
   } catch (err) {
-    res.status(500).json({ error: 'Failed to load Disney glossary', message: err.message });
+    res.status(500).json({ error: 'Failed to load brand glossary', message: err.message });
   }
 });
 
-// Add new glossary term
+// Add new glossary term (supports multi-language translations)
 app.post('/api/glossary/terms', (req, res) => {
   try {
-    const { en, es, category, keep_original, notes } = req.body;
-    if (!en || !es) {
-      return res.status(400).json({ error: 'English term and Spanish translation are required.' });
+    const { en, es, pt, fr, ja, zh, category, keep_original, notes, translations } = req.body;
+    if (!en || (!es && !translations)) {
+      return res.status(400).json({ error: 'English term and primary translation are required.' });
     }
 
     const termId = en.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    
+    // Assemble translations dictionary
+    const termTranslations = Object.assign({}, translations || {});
+    if (es && !termTranslations.es) termTranslations.es = es.trim();
+    if (pt && !termTranslations.pt) termTranslations.pt = pt.trim();
+    if (fr && !termTranslations.fr) termTranslations.fr = fr.trim();
+    if (ja && !termTranslations.ja) termTranslations.ja = ja.trim();
+    if (zh && !termTranslations.zh) termTranslations.zh = zh.trim();
+    if (!termTranslations.es) {
+      termTranslations.es = en.trim();
+    }
+
     const newTerm = {
       term_id: termId,
       en: en.trim(),
       category: category ? category.trim() : 'Custom Term',
       keep_original: Boolean(keep_original),
-      translations: {
-        es: es.trim()
-      },
+      translations: termTranslations,
       notes: notes ? notes.trim() : 'Added via Glossary Manager'
     };
 
     const targetPaths = [
+      path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
       path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
+      path.join(__dirname, 'enterprise_parks_glossary.json'),
       path.join(__dirname, 'disney_parks_glossary.json')
     ];
 
@@ -75,11 +91,12 @@ app.post('/api/glossary/terms', (req, res) => {
 
     // Also update CSV file if it exists
     const csvPaths = [
+      path.resolve(__dirname, '../../glossaries/brand_glossary_en_es.csv'),
       path.resolve(__dirname, '../../glossaries/disney_glossary_en_es.csv')
     ];
     for (const cp of csvPaths) {
       if (fs.existsSync(cp)) {
-        fs.appendFileSync(cp, `\n${newTerm.en},${newTerm.translations.es}`);
+        fs.appendFileSync(cp, `\n${newTerm.en},${newTerm.translations.es || newTerm.en}`);
       }
     }
 
@@ -95,7 +112,9 @@ app.delete('/api/glossary/terms/:termId', (req, res) => {
   try {
     const { termId } = req.params;
     const targetPaths = [
+      path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
       path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
+      path.join(__dirname, 'enterprise_parks_glossary.json'),
       path.join(__dirname, 'disney_parks_glossary.json')
     ];
 
@@ -171,31 +190,31 @@ const DEFAULT_DLP_CATALOG = [
     defaultEnabled: true
   },
   {
-    name: "DISNEY_RESERVATION_ID",
-    displayName: "Disney Reservation IDs",
-    category: "Disney Brand Custom",
-    icon: "🏰",
-    description: "Walt Disney World, Disneyland, and Disney Cruise Line reservation numbers (e.g. WDW-982341, DLR-83921)",
-    placeholder: "[DISNEY_RESERVATION_REDACTED]",
+    name: "RESERVATION_CONFIRMATION_ID",
+    displayName: "Reservation & Booking IDs",
+    category: "Hospitality & Guest Identifiers",
+    icon: "🎫",
+    description: "Resort, hotel, and attraction booking confirmation numbers (e.g. RES-982341, CONF-83921)",
+    placeholder: "[RESERVATION_ID_REDACTED]",
     defaultEnabled: true,
     isCustom: true
   },
   {
-    name: "MAGICBAND_UID",
-    displayName: "MagicBand+ Hardware UID",
-    category: "Disney Brand Custom",
-    icon: "🪄",
-    description: "MagicBand+ RFID / NFC serial numbers and hardware identifiers (e.g. MB-A1B2C3D4)",
-    placeholder: "[MAGICBAND_UID_REDACTED]",
+    name: "SMART_WRISTBAND_UID",
+    displayName: "Smart Wristband / RFID UID",
+    category: "Hospitality & Guest Identifiers",
+    icon: "📡",
+    description: "Smart wearable RFID/NFC serial numbers and hardware identifiers (e.g. WB-A1B2C3D4)",
+    placeholder: "[WRISTBAND_UID_REDACTED]",
     defaultEnabled: true,
     isCustom: true
   },
   {
-    name: "DISNEY_PIN",
-    displayName: "Disney Account & Resort PINs",
-    category: "Disney Brand Custom",
+    name: "ACCOUNT_SECURITY_PIN",
+    displayName: "Account & Room Security PINs",
+    category: "Hospitality & Guest Identifiers",
     icon: "🔑",
-    description: "4-to-6 digit security PINs used for MyDisneyExperience, hotel room door unlock, and park charging",
+    description: "4-to-6 digit security PINs used for guest verification, room door access, and payment authorizations",
     placeholder: "[PIN_REDACTED]",
     defaultEnabled: true,
     isCustom: true
@@ -246,18 +265,25 @@ app.post('/api/dlp/sanitize', async (req, res) => {
         sanitized = sanitized.replace(cc, "[CREDIT_CARD_REDACTED]");
       }
     }
-    if (info_types.includes("DISNEY_RESERVATION_ID") || info_types.length === 0) {
-      const resPat = /(?:WDW|DLR|DISNEY|RES|CONF)[-#\s]?\d{5,10}/gi;
+    if (info_types.includes("RESERVATION_CONFIRMATION_ID") || info_types.includes("DISNEY_RESERVATION_ID") || info_types.length === 0) {
+      const resPat = /(?:RES|RESV|BKG|CONF|BOOKING|WDW|DLR)[-#\s]?\d{5,10}/gi;
       if (resPat.test(sanitized)) {
-        findings.push({ infoType: "DISNEY_RESERVATION_ID", displayName: "Disney Reservation IDs", icon: "🏰" });
-        sanitized = sanitized.replace(resPat, "[DISNEY_RESERVATION_REDACTED]");
+        findings.push({ infoType: "RESERVATION_CONFIRMATION_ID", displayName: "Reservation & Booking IDs", icon: "🎫" });
+        sanitized = sanitized.replace(resPat, "[RESERVATION_ID_REDACTED]");
       }
     }
-    if (info_types.includes("MAGICBAND_UID") || info_types.length === 0) {
-      const mbPat = /(?:MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}/gi;
+    if (info_types.includes("SMART_WRISTBAND_UID") || info_types.includes("MAGICBAND_UID") || info_types.length === 0) {
+      const mbPat = /(?:WB|BAND|RFID|MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}/gi;
       if (mbPat.test(sanitized)) {
-        findings.push({ infoType: "MAGICBAND_UID", displayName: "MagicBand+ Hardware UID", icon: "🪄" });
-        sanitized = sanitized.replace(mbPat, "[MAGICBAND_UID_REDACTED]");
+        findings.push({ infoType: "SMART_WRISTBAND_UID", displayName: "Smart Wristband / RFID UID", icon: "📡" });
+        sanitized = sanitized.replace(mbPat, "[WRISTBAND_UID_REDACTED]");
+      }
+    }
+    if (info_types.includes("ACCOUNT_SECURITY_PIN") || info_types.includes("DISNEY_PIN") || info_types.length === 0) {
+      const pinPat = /(?:pin|passcode|code|security pin)\s*(?:is|:)?\s*(\b\d{4,6}\b)/gi;
+      if (pinPat.test(sanitized)) {
+        findings.push({ infoType: "ACCOUNT_SECURITY_PIN", displayName: "Account & Room Security PINs", icon: "🔑" });
+        sanitized = sanitized.replace(pinPat, (match, p1) => match.replace(p1, "[PIN_REDACTED]"));
       }
     }
     if (info_types.includes("PHONE_NUMBER") || info_types.length === 0) {
@@ -294,5 +320,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🏰 Disney Live Translation Web Testbed running on port ${PORT}`);
+  console.log(`🌐 Enterprise Live Translation Web Client running on port ${PORT}`);
 });

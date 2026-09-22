@@ -1,7 +1,7 @@
 {
-  "name": "disney-gemini-live-proxy",
+  "name": "gemini-live-proxy",
   "version": "1.0.0",
-  "description": "Vertex AI Gemini 2.0 Multimodal Live API WebSocket Proxy for Disney Live Translation",
+  "description": "Vertex AI Gemini Multimodal Live API WebSocket Proxy for Enterprise Live Translation",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",

@@ -7,7 +7,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY dist ./dist
-COPY disney_parks_glossary.json ./
+COPY *glossary.json ./
 
 EXPOSE 8080
 CMD ["node", "dist/server.js"]

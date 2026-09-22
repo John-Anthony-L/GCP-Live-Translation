@@ -8,11 +8,11 @@ from typing import Optional, Dict, List, Any
 from google.cloud import speech_v1p1beta1 as speech
 from google import genai
 from google.genai import types
-from pipeline import DisneyTranslationPipeline
+from pipeline import LiveTranslationPipeline, DisneyTranslationPipeline
 from glossary_helper import create_or_update_gcs_glossary, create_translation_api_glossary
 from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
 
-app = FastAPI(title="Disney Live Translation - Gemini 3.5 Live Transcribe + Cloud DLP + MT v3 + TTS")
+app = FastAPI(title="Enterprise Live Translation - Chirp 3 GA + Cloud DLP + MT v3 + Chirp 3 HD TTS")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,9 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pipeline = DisneyTranslationPipeline()
+pipeline = LiveTranslationPipeline()
 
-PROJECT_ID = os.getenv("PROJECT_ID", "disney-parks-live-translation")
+PROJECT_ID = os.getenv("PROJECT_ID", "gcp-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
 def resolve_locale(lang: str) -> str:
@@ -516,13 +516,13 @@ class DlpSanitizeRequest(BaseModel):
 @app.get("/")
 def root():
     return {
-        "service": "Disney Parks Live Translation Advanced Pipeline",
+        "service": "Enterprise Live Translation Advanced Pipeline",
         "status": "online",
         "models": {
             "speech_to_text": os.getenv("STT_MODEL", "chirp_3"),
             "data_loss_prevention": "Google Cloud Sensitive Data Protection (DLP)",
             "machine_translation": os.getenv("TRANSLATION_MODEL", "general/translation-llm"),
-            "text_to_speech": "Neural2 / Journey High Fidelity"
+            "text_to_speech": "Google Cloud Chirp 3 HD Voices"
         },
         "endpoints": {
             "health": "/health",
@@ -541,7 +541,7 @@ def health():
     return {
         "status": "healthy",
         "service": "translation-pipeline",
-        "project_id": os.getenv("PROJECT_ID", "disney-parks-live-translation"),
+        "project_id": os.getenv("PROJECT_ID", "gcp-live-translation"),
         "location": os.getenv("LOCATION", "us-central1"),
         "stt_model": os.getenv("STT_MODEL", "chirp_3"),
         "dlp_enabled": True,
@@ -656,9 +656,18 @@ async def upload_audio(
 
 @app.post("/api/glossary/sync")
 def sync_glossary(csv_path: Optional[str] = None):
-    target_path = csv_path or "/app/glossaries/disney_glossary_en_es.csv"
-    if not os.path.exists(target_path):
-        target_path = "../../glossaries/disney_glossary_en_es.csv"
+    target_path = csv_path
+    if not target_path:
+        for candidate in [
+            "/app/glossaries/brand_glossary_en_es.csv",
+            "/app/glossaries/disney_glossary_en_es.csv",
+            "../../glossaries/brand_glossary_en_es.csv",
+            "../../glossaries/disney_glossary_en_es.csv"
+        ]:
+            if os.path.exists(candidate):
+                target_path = candidate
+                break
+    target_path = target_path or "../../glossaries/brand_glossary_en_es.csv"
     
     gcs_uri = create_or_update_gcs_glossary(target_path)
     result = create_translation_api_glossary(gcs_uri)

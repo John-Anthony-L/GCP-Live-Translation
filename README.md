@@ -1,6 +1,6 @@
-# 🏰 Disney Parks Live Translation POC (Google Cloud)
+# 🌐 Enterprise Live Translation POC (Google Cloud)
 
-A production-ready, multi-container Proof of Concept (POC) evaluating **real-time live speech translation** for Walt Disney World & Disneyland Cast Members and International Guests, featuring **custom vocabulary and glossary injection** for Disney brand terms, attraction names, and park operations.
+A production-ready, multi-container Proof of Concept (POC) evaluating **real-time live speech translation** for theme park & resort guest service hosts, hospitality personnel, and international guests, featuring **custom vocabulary and multi-language glossary injection** for brand terms, attraction names, and operations.
 
 Powered by Google Cloud's **100% General Availability (GA)** enterprise stack: **Speech-to-Text v2 Chirp 3**, **Cloud Sensitive Data Protection (DLP)**, **Cloud Translation API Advanced v3**, and **Text-to-Speech Chirp 3 HD**.
 
@@ -12,12 +12,12 @@ Powered by Google Cloud's **100% General Availability (GA)** enterprise stack: *
 | :--- | :--- | :--- |
 | **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS | **Speech-to-Speech (S2S)** Bidirectional WebSocket |
 | **Latency Profile** | ⚡ **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) | ⚡ **450ms – 850ms** (Simultaneous audio turns) |
-| **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Disney boost) | Gemini Live Audio Transcription / Gemini 3.5 Live |
-| **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, MagicBand UIDs, PINs) | Prompt-level safety filters |
-| **Disney Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Phrase Biasing | Contextual System Prompt injection |
+| **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Phrase Set boost) | Gemini Live Audio Transcription / Gemini 3.5 Live |
+| **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, Wristband UIDs, Security PINs) | Prompt-level safety filters |
+| **Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Multi-Language Catalog (ES, PT, FR, JA, ZH) | Contextual System Prompt injection |
 | **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) | Built-in Gemini Live audio personas |
 | **Compliance & Readiness** | 🔒 **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant | Preview features, non-deterministic phrasing |
-| **Primary Use Case** | **In-Park Cast Member ↔ Guest Countertops, Kiosks & Mobile Web** | Conversational dialogue exploration |
+| **Primary Use Case** | **In-Park Host ↔ Guest Countertops, Kiosks & Mobile Web** | Conversational dialogue exploration |
 
 ---
 
@@ -35,13 +35,13 @@ flowchart TD
 
     subgraph Pipeline["Enterprise Translation & Safety Pipeline"]
         direction TB
-        STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA in us multi-region)<br/>• Disney Phrase Biasing (+20.0 Boost)<br/>• Cloud Speech v1 fallback (latest_short)"]
-        DLP["<b>2. Sensitive Data Protection (Cloud DLP)</b><br/>• Real-time PII & PCI-DSS Redaction<br/>• Disney IDs: MagicBand UID, PIN, Res #"]
-        Trans["<b>3. Translation & Brand Glossary</b><br/>• Cloud Translation API Advanced v3<br/>• Deterministic Disney Terms Enforcement"]
+        STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA in us multi-region)<br/>• Brand Phrase Biasing (+20.0 Boost)<br/>• Cloud Speech v1 fallback (latest_short)"]
+        DLP["<b>2. Sensitive Data Protection (Cloud DLP)</b><br/>• Real-time PII & PCI-DSS Redaction<br/>• Enterprise IDs: Smart Wristband UID, PIN, Res #"]
+        Trans["<b>3. Translation & Brand Glossary</b><br/>• Cloud Translation API Advanced v3<br/>• Deterministic Brand Terms Enforcement"]
         TTS["<b>4. Text-to-Speech (TTS)</b><br/>• Chirp 3 HD Voices (High Fidelity)<br/>• Latin American & Spain Spanish"]
     end
 
-    subgraph Experience["Cast Member & Guest Output"]
+    subgraph Experience["Host & Guest Output"]
         TextOut["<b>Real-Time Dual Subtitles</b><br/>(Live Screen Display)"]
         AudioOut["<b>Chirp 3 HD Audio Playback</b><br/>(Speaker / Headset)"]
     end
@@ -80,9 +80,9 @@ flowchart TD
 ```
 GCP-Live-Translation/
 ├── glossaries/
-│   ├── disney_parks_glossary.json      # Structured multi-language Disney terms, phonetics & rules
-│   ├── disney_glossary_en_es.csv       # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
-│   └── disney_glossary_es_en.csv       # Cloud Translation API Advanced CSV glossary (ES ➔ EN)
+│   ├── enterprise_parks_glossary.json  # Structured multi-language terms, phonetics & rules
+│   ├── brand_glossary_en_es.csv        # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
+│   └── brand_glossary_es_en.csv        # Cloud Translation API Advanced CSV glossary (ES ➔ EN)
 ├── services/
 │   ├── translation-pipeline/           # Core Service: Production GA Pipeline (FastAPI)
 │   │   ├── main.py                     # FastAPI REST & WebSocket endpoints (/ws/stream-translate)
@@ -93,7 +93,7 @@ GCP-Live-Translation/
 │   │   └── requirements.txt
 │   ├── web-client/                     # Core Service: Interactive Web & Mobile Simulator Testbed
 │   │   ├── public/                     # HTML5, CSS, AudioWorklet client & Telemetry Terminal
-│   │   ├── server.js                   # Node/Express API with dynamic Glossary CRUD
+│   │   ├── server.js                   # Node/Express API with dynamic Multi-Language Glossary CRUD
 │   │   └── Dockerfile
 │   └── gemini-live-proxy/              # Supplementary Service: Multimodal Live WebSocket Gateway (Node.js/TS)
 │       ├── src/                        # WebSocket bridge and Vertex AI Live client
@@ -126,8 +126,8 @@ PROJECT_ID="your-gcp-project-id" ./infra/deploy.sh
 The script will automatically:
 1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `run`, `storage`, `artifactregistry`, `cloudbuild`).
 2. Create the Cloud Storage glossary bucket `gs://${PROJECT_ID}-glossaries`.
-3. Upload `disney_glossary_en_es.csv` and configure Translation API Advanced.
-4. Build and deploy **Gemini Live Proxy**, **Translation Pipeline** (configured with Chirp 3 GA STT, Cloud DLP, and Chirp 3 HD TTS), and **Web Client** containers to Cloud Run in `us-central1`.
+3. Upload `brand_glossary_en_es.csv` and configure Translation API Advanced.
+4. Build and deploy **Translation Pipeline** (configured with Chirp 3 GA STT, Cloud DLP, and Chirp 3 HD TTS) and **Web Client** containers to Cloud Run in `us-central1`.
 5. Output live Cloud Run service URLs.
 
 ---
@@ -135,23 +135,23 @@ The script will automatically:
 ## 🧪 Testing the Live Translation POC
 
 ### Live 2-Way Translation Testbed (`http://localhost:3000`)
-Open the deployed `disney-live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop, tablet, or mobile browser:
+Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop, tablet, or mobile browser:
 
 1. **Select Language Pair & Accent**:
    - 🇲🇽 **English ⇄ Latin American Spanish (`es-US`)** *(Default)*
    - 🇪🇸 **English ⇄ Spain Spanish (`es-ES`)**
    - 🇧🇷 Portuguese, 🇫🇷 French, 🇯🇵 Japanese, 🇨🇳 Mandarin
 2. **Select Speech-to-Text Model**:
-   - 🎙️ **Chirp 3 (Speech v2 GA)** *(Recommended)*: High-accuracy foundational model with built-in neural denoiser and Disney phrase adaptation.
+   - 🎙️ **Chirp 3 (Speech v2 GA)** *(Recommended)*: High-accuracy foundational model with built-in neural denoiser and brand phrase adaptation.
    - ⚡ **Cloud Speech (`latest_short`)**: Ultra-fast single-utterance baseline model (< 10s commands).
    - ✨ **Gemini 3.5 Live Transcribe**: Multimodal transcription preview.
 3. **Select Mode & Speak**:
-   - **Cast Member 🎤 / Guest 🌐 Push-to-Talk**: Hold or click to speak individual turns.
+   - **Team Host 🎤 / Guest 🌐 Push-to-Talk**: Hold or click to speak individual turns.
    - **🎙️ Ambient 2-Way Live Stream**: Hands-free conversation mode where the system continuously listens, detects speech boundaries, redacts PII, translates, and plays back synthesized audio.
-4. **Try Sample Disney Phrases**:
+4. **Try Sample Phrases**:
    - *"Excuse me, where is the Lightning Lane entrance for Space Mountain?"*
    - *"Do I need a Virtual Queue for Star Wars: Rise of the Resistance?"*
-   - *"My reservation number is WDW-982341 and my PIN is 4821."* (Notice DLP automatically masks the reservation ID and PIN before translation and speech synthesis!)
+   - *"My reservation number is RES-982341 and my PIN is 4821."* (Notice DLP automatically masks the reservation ID and PIN before translation and speech synthesis!)
 
 ---
 
@@ -165,18 +165,18 @@ The translation pipeline integrates **Google Cloud Sensitive Data Protection (DL
 | :--- | :--- | :---: | :--- | :---: |
 | `CREDIT_CARD_NUMBER` | PCI Compliance | 💳 | Visa, MasterCard, Amex, Discover card numbers & CVVs | **Active** |
 | `PHONE_NUMBER` | Contact Info | 📱 | US & International telephone and mobile numbers | **Active** |
-| `EMAIL_ADDRESS` | Contact Info | 📧 | Guest and Cast Member personal & work email addresses | **Active** |
+| `EMAIL_ADDRESS` | Contact Info | 📧 | Guest and Host personal & work email addresses | **Active** |
 | `PERSON_NAME` | COPPA / Minors | 👶 | Full names of guests, children, and family members | Optional (Kiosk) |
 | `US_PASSPORT` | Government ID | 🛂 | Passport numbers, national ID cards, driver's licenses | **Active** |
-| `DISNEY_RESERVATION_ID` | Disney Custom | 🏰 | WDW/DLR booking confirmation numbers (`WDW-982341`, `DLR-83921`) | **Active** |
-| `MAGICBAND_UID` | Disney Custom | 🪄 | MagicBand+ RFID/NFC serial numbers (`MB-A1B2C3D4`) | **Active** |
-| `DISNEY_PIN` | Disney Custom | 🔑 | 4-to-6 digit MyDisneyExperience, room lock, and payment PINs | **Active** |
+| `RESERVATION_CONFIRMATION_ID` | Hospitality Custom | 🎫 | Resort, hotel, and park booking confirmation numbers (`RES-982341`, `CONF-83921`) | **Active** |
+| `SMART_WRISTBAND_UID` | Hospitality Custom | 📡 | Smart wearable RFID / NFC serial numbers (`WB-A1B2C3D4`) | **Active** |
+| `ACCOUNT_SECURITY_PIN` | Hospitality Custom | 🔑 | 4-to-6 digit security PINs used for guest verification & room access | **Active** |
 
 ### Deployment Presets
 
-The Web Testbed and backend support dynamic preset modes depending on the in-park operational context:
+The Web Testbed and backend support dynamic preset modes depending on the operational context:
 1. 🔒 **Public Park Kiosk**: Enables all 8 privacy filters, including `PERSON_NAME` for strict COPPA / minor privacy compliance at self-service kiosks.
-2. 🏰 **Front Desk & Concierge** *(Default)*: Enforces PCI-DSS, passport, and custom Disney identifiers while allowing guest names for warm, personalized Cast Member greetings.
+2. 🏨 **Front Desk & Concierge** *(Default)*: Enforces PCI-DSS, passport, and custom hospitality identifiers while allowing guest names for warm, personalized host greetings.
 3. 📞 **Over-The-Phone Booking (Bypass)**: Temporarily bypasses redaction for authorized call-center agents who need to collect phone numbers and reservation IDs.
 
 ### Interactive DLP Sandbox
@@ -190,7 +190,7 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 * **🎙️ Mic Input / VAD**: Live RMS audio level meter displaying speech energy in real time.
 * **🗣️ STT Capture**: Live interim and finalized transcript streaming with model attribution (`chirp_3`).
 * **🛡️ Cloud DLP**: Real-time redaction status indicating detected entities and sanitization latency.
-* **🌐 Translation LLM**: Progressive translation output adhering to Disney glossary rules.
+* **🌐 Translation LLM**: Progressive translation output adhering to brand glossary rules.
 * **🔊 TTS Speech**: Audio playback state and duration metrics.
 * **📜 Live Log Stream**: High-resolution event stream for debugging network latency, WebSocket boundaries, and payload sizes.
 
@@ -205,7 +205,7 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 | `GET` | `/health` | Healthcheck and active configuration status (project, location, models) |
 | `GET` | `/api/dlp/catalog` | Returns the complete catalog of active and custom DLP InfoTypes |
 | `POST` | `/api/dlp/sanitize` | Standalone endpoint to inspect and mask text against active DLP rules |
-| `POST` | `/api/translate-text` | Translates text using Cloud Translation API Advanced v3 + Disney Glossary |
+| `POST` | `/api/translate-text` | Translates text using Cloud Translation API Advanced v3 + Brand Glossary |
 | `POST` | `/api/translate-audio` | One-shot audio transcription (Chirp 3), translation, and TTS synthesis |
 | `WS` | `/ws/stream-translate` | **Real-time bidirectional WebSocket** for live sentence streaming, interim text, DLP scrubbing, and TTS audio chunks |
 | `GET` | `/docs` | Interactive Swagger / OpenAPI documentation |
@@ -232,7 +232,7 @@ PROJECT_ID=your-own-gcp-project-id
 LOCATION=us-central1
 CHIRP_REGION=us
 STT_MODEL=chirp_3
-GLOSSARY_ID=disney-parks-glossary-en-es
+GLOSSARY_ID=brand-parks-glossary-en-es
 GLOSSARY_BUCKET=your-own-gcp-project-id-glossaries
 ```
 
@@ -265,29 +265,36 @@ docker compose up --build
 
 ---
 
-## 📖 Disney Glossary & Terminology Management
+## 📖 Brand Glossary & Multi-Language Management
 
-The system preserves Disney brand equity, attractions, and park terms using a dual-layer enforcement:
+The system preserves brand equity, attractions, and park terms using dual-layer enforcement across multiple target languages (**Spanish, Portuguese, French, Japanese, and Mandarin Chinese**):
 1. **Prompt Biasing**: Injected into Chirp 3 Speech Adaptation (+20.0 score) and Gemini 3.5 Transcribe.
 2. **Cloud Translation API Advanced v3**: Deterministic TSV/CSV glossary mapping.
 
-### Adding & Removing Terms via Web UI
+### Multi-Language View & Management via Web UI
 In the web interface at `http://localhost:3000`:
-1. Click on the **"📖 Disney Brand Glossary"** tab.
-2. Click **"➕ Add New Term"** to open the creation modal.
-3. Provide the English term, translation, category, and whether to preserve the brand name. Click **"💾 Save & Enforce Term"**.
-4. To remove an existing term, click the **"🗑️ Remove"** button on any glossary card.
+1. Click on the **"📖 Brand Glossary & Languages"** tab.
+2. **View Covered Languages**: Each term card displays language chips (`ES`, `PT`, `FR`, `JA`, `ZH`) indicating which languages have localized translations.
+3. **Filter by Language**: Use the **"🌐 View Language"** dropdown in the toolbar to focus on a specific language (e.g. Spanish, French, Japanese) or view all translations simultaneously.
+4. **Add New Terms**: Click **"➕ Add New Term"** to enter the English concept and translations for Spanish, Portuguese, French, Japanese, and Mandarin.
+5. **Remove Terms**: Click the **"🗑️ Remove"** button on any card to delete it from the active catalog and disk storage.
 
 ### Programmatic Glossary API
 * **List All Terms:** `GET /api/glossary`
-* **Add Term:** `POST /api/glossary/terms`
+* **Add Multi-Language Term:** `POST /api/glossary/terms`
   ```json
   {
-    "en": "TRON Lightcycle / Run",
-    "es": "TRON Lightcycle / Run",
-    "category": "Attraction",
+    "en": "Express Priority Pass",
+    "category": "Service",
     "keep_original": true,
-    "notes": "Tomorrowland coaster"
+    "translations": {
+      "es": "Pase de Prioridad Express",
+      "pt": "Passe de Prioridade Express",
+      "fr": "Passe Prioritaire Express",
+      "ja": "エクスプレス・プライオリティ・パス",
+      "zh": "特快优先通行证"
+    },
+    "notes": "VIP priority attraction queue pass"
   }
   ```
 * **Delete Term:** `DELETE /api/glossary/terms/:termId`
@@ -304,6 +311,6 @@ In the web interface at `http://localhost:3000`:
 | `CHIRP_REGION` | `us` | Multi-region endpoint for Speech-to-Text v2 **Chirp 3 GA** |
 | `STT_MODEL` | `chirp_3` | Speech recognition model identifier (`chirp_3`, `gemini-3.5-transcribe`, `latest_short`) |
 | `TTS_VOICE_NAME` | `es-US-Chirp3-HD-Aoede` | Default Google Cloud **Chirp 3 HD** voice for Latin American Spanish |
-| `GLOSSARY_ID` | `disney-parks-glossary-en-es` | Cloud Translation API Advanced glossary resource ID |
-| `GLOSSARY_BUCKET` | `[PROJECT_ID]-glossaries` | Cloud Storage bucket storing Disney CSV glossaries |
+| `GLOSSARY_ID` | `brand-parks-glossary-en-es` | Cloud Translation API Advanced glossary resource ID |
+| `GLOSSARY_BUCKET` | `[PROJECT_ID]-glossaries` | Cloud Storage bucket storing CSV glossaries |
 

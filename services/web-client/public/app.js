@@ -1,4 +1,4 @@
-// Disney Parks 2-Way Live Translation Client (Powered by Gemini 3.5 Transcribe + Cloud DLP + MT v3 + TTS)
+// Enterprise 2-Way Live Translation Client (Powered by Chirp 3 GA + Cloud DLP + MT v3 + Chirp 3 HD TTS)
 let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'dlp' | 'glossary'
 let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest' | 'ambient'
 let isRecording = false;
@@ -25,9 +25,9 @@ let activeDlpInfoTypes = new Set([
   "PHONE_NUMBER",
   "EMAIL_ADDRESS",
   "US_PASSPORT",
-  "DISNEY_RESERVATION_ID",
-  "MAGICBAND_UID",
-  "DISNEY_PIN"
+  "RESERVATION_CONFIRMATION_ID",
+  "SMART_WRISTBAND_UID",
+  "ACCOUNT_SECURITY_PIN"
 ]);
 
 // DOM Elements
@@ -191,8 +191,8 @@ function setupControls() {
   clearChatBtn.addEventListener('click', () => {
     chatFeed.innerHTML = `
       <div class="chat-welcome">
-        <span class="sparkle-icon">✨</span>
-        <p>Chat cleared. Ready for live Disney translation with Cloud DLP protection.</p>
+        <span class="sparkle-icon">🌐</span>
+        <p>Chat cleared. Ready for live translation with Cloud DLP protection.</p>
       </div>
     `;
     currentMessageBubble = null;
@@ -227,12 +227,12 @@ async function setupDLP() {
     dlpCatalog = [
       { name: "CREDIT_CARD_NUMBER", displayName: "Credit Card / PCI-DSS", category: "PCI Compliance", icon: "💳", description: "Visa, MasterCard, Amex, Discover card numbers and CVVs", placeholder: "[CREDIT_CARD_REDACTED]", defaultEnabled: true },
       { name: "PHONE_NUMBER", displayName: "Phone Numbers", category: "Contact Info", icon: "📱", description: "US and International mobile/landline numbers", placeholder: "[PHONE_REDACTED]", defaultEnabled: true },
-      { name: "EMAIL_ADDRESS", displayName: "Email Addresses", category: "Contact Info", icon: "📧", description: "Guest and Cast Member personal/work email addresses", placeholder: "[EMAIL_REDACTED]", defaultEnabled: true },
+      { name: "EMAIL_ADDRESS", displayName: "Email Addresses", category: "Contact Info", icon: "📧", description: "Guest and Host personal/work email addresses", placeholder: "[EMAIL_REDACTED]", defaultEnabled: true },
       { name: "PERSON_NAME", displayName: "Guest / Minor Names (COPPA)", category: "Children & PII Privacy", icon: "👶", description: "Full names of guests, minors, and family members", placeholder: "[GUEST_NAME_REDACTED]", defaultEnabled: false },
       { name: "US_PASSPORT", displayName: "Passports & Gov IDs", category: "Government ID", icon: "🛂", description: "Passport numbers, driver licenses, national ID numbers", placeholder: "[PASSPORT_REDACTED]", defaultEnabled: true },
-      { name: "DISNEY_RESERVATION_ID", displayName: "Disney Reservation IDs", category: "Disney Brand Custom", icon: "🏰", description: "WDW/DLR hotel, dining, and park reservation numbers (e.g. WDW-982341)", placeholder: "[DISNEY_RESERVATION_REDACTED]", defaultEnabled: true, isCustom: true },
-      { name: "MAGICBAND_UID", displayName: "MagicBand+ Hardware UID", category: "Disney Brand Custom", icon: "🪄", description: "MagicBand+ RFID / NFC serial numbers (e.g. MB-A1B2C3D4)", placeholder: "[MAGICBAND_UID_REDACTED]", defaultEnabled: true, isCustom: true },
-      { name: "DISNEY_PIN", displayName: "Disney Account & Resort PINs", category: "Disney Brand Custom", icon: "🔑", description: "4-to-6 digit security PINs used for MyDisneyExperience & room charging", placeholder: "[PIN_REDACTED]", defaultEnabled: true, isCustom: true }
+      { name: "RESERVATION_CONFIRMATION_ID", displayName: "Reservation & Booking IDs", category: "Hospitality & Guest Identifiers", icon: "🎫", description: "Resort, hotel, and park booking confirmation numbers (e.g. RES-982341, CONF-83921)", placeholder: "[RESERVATION_ID_REDACTED]", defaultEnabled: true, isCustom: true },
+      { name: "SMART_WRISTBAND_UID", displayName: "Smart Wristband / RFID UID", category: "Hospitality & Guest Identifiers", icon: "📡", description: "Smart wearable RFID / NFC serial numbers (e.g. WB-A1B2C3D4)", placeholder: "[WRISTBAND_UID_REDACTED]", defaultEnabled: true, isCustom: true },
+      { name: "ACCOUNT_SECURITY_PIN", displayName: "Account & Room Security PINs", category: "Hospitality & Guest Identifiers", icon: "🔑", description: "4-to-6 digit security PINs used for guest verification & room access", placeholder: "[PIN_REDACTED]", defaultEnabled: true, isCustom: true }
     ];
   }
 
@@ -731,9 +731,9 @@ async function connectWebSocket() {
         }
         if (terminalMtText) {
           terminalMtText.innerText = `"${data.translated_text}"`;
-          terminalMtMeta.innerText = `${data.glossary_applied ? '🏰 Glossary Enforced' : 'Direct LLM'} • ${Math.round(data.translation_ms || 0)}ms`;
+          terminalMtMeta.innerText = `${data.glossary_applied ? '📖 Brand Glossary Enforced' : 'Direct LLM'} • ${Math.round(data.translation_ms || 0)}ms`;
         }
-        addTerminalLog(`Translation: "${data.translated_text}" (${data.glossary_applied ? 'Disney Glossary Enforced' : 'Direct LLM'}, ${Math.round(data.translation_ms || 0)}ms)`, 'mt');
+        addTerminalLog(`Translation: "${data.translated_text}" (${data.glossary_applied ? 'Brand Glossary Enforced' : 'Direct LLM'}, ${Math.round(data.translation_ms || 0)}ms)`, 'mt');
         setLiveStatus('Generating Neural Speech...', true);
       } else if (data.type === 'audio' && data.pcm) {
         if (data.total_latency_ms && data.total_latency_ms > 0) {
@@ -1174,28 +1174,38 @@ function updateMessageTranslation(translatedText, glossaryApplied, transMs) {
   if (!currentMessageBubble) return;
   const transEl = currentMessageBubble.querySelector('.message-translated');
   if (transEl) {
-    const glossaryBadge = glossaryApplied ? ' <span class="badge-mini badge-glossary">🔒 Disney Glossary Applied</span>' : '';
+    const glossaryBadge = glossaryApplied ? ' <span class="badge-mini badge-glossary">🔒 Brand Glossary Applied</span>' : '';
     const latencyBadge = transMs ? ` <span class="badge-mini">⏱️ ${Math.round(transMs)}ms</span>` : '';
     transEl.innerHTML = `✨ ${translatedText}${glossaryBadge}${latencyBadge}`;
   }
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
-// Disney Protected Brand Glossary Setup
+// Enterprise Protected Brand Glossary & Language Management
+const GLOSSARY_LANG_MAP = {
+  es: { name: 'Spanish', flag: '🇪🇸' },
+  pt: { name: 'Portuguese', flag: '🇧🇷' },
+  fr: { name: 'French', flag: '🇫🇷' },
+  ja: { name: 'Japanese', flag: '🇯🇵' },
+  zh: { name: 'Mandarin Chinese', flag: '🇨🇳' }
+};
+
+let currentGlossaryLang = 'all';
+
 async function setupGlossary() {
   const fallbackTerms = [
-    { term_id: "lightning_lane", en: "Lightning Lane", category: "Service", keep_original: true, translations: { es: "Lightning Lane", pt: "Lightning Lane", fr: "Lightning Lane" }, notes: "Disney express queue service. Do not translate literally." },
-    { term_id: "magicband_plus", en: "MagicBand+", category: "Merchandise/Service", keep_original: true, translations: { es: "MagicBand+", pt: "MagicBand+", fr: "MagicBand+" }, notes: "Wearable RFID/Bluetooth park device." },
-    { term_id: "cast_member", en: "Cast Member", category: "Personnel", keep_original: false, translations: { es: "Miembro del Elenco", pt: "Membro do Elenco", fr: "Cast Member / Membre de l'équipe" }, notes: "Disney employee title." },
-    { term_id: "space_mountain", en: "Space Mountain", category: "Attraction", keep_original: true, translations: { es: "Space Mountain", pt: "Space Mountain" }, notes: "Tomorrowland indoor roller coaster." },
-    { term_id: "rise_of_the_resistance", en: "Star Wars: Rise of the Resistance", category: "Attraction", keep_original: true, translations: { es: "Star Wars: Rise of the Resistance" }, notes: "Galaxy's Edge dark ride." },
-    { term_id: "haunted_mansion", en: "Haunted Mansion", category: "Attraction", keep_original: true, translations: { es: "Haunted Mansion" }, notes: "Liberty Square / New Orleans Square attraction." },
-    { term_id: "rope_drop", en: "Rope Drop", category: "Park Concept", keep_original: false, translations: { es: "Apertura del parque / Entrada a primera hora" }, notes: "Park opening ceremony." },
-    { term_id: "photopass", en: "Disney PhotoPass", category: "Service", keep_original: true, translations: { es: "Disney PhotoPass" }, notes: "Professional in-park photography service." },
-    { term_id: "rider_switch", en: "Rider Switch", category: "Service", keep_original: false, translations: { es: "Intercambio de Pasajeros / Rider Switch" }, notes: "Child swap service for attractions." },
-    { term_id: "single_rider", en: "Single Rider", category: "Queue Concept", keep_original: false, translations: { es: "Fila de Pasajero Individual / Single Rider" }, notes: "Dedicated queue for solo riders." },
-    { term_id: "tianas_bayou_adventure", en: "Tiana's Bayou Adventure", category: "Attraction", keep_original: true, translations: { es: "Tiana's Bayou Adventure" }, notes: "Critter Country attraction." },
-    { term_id: "big_thunder_mountain", en: "Big Thunder Mountain Railroad", category: "Attraction", keep_original: true, translations: { es: "Big Thunder Mountain Railroad" }, notes: "Frontierland coaster." }
+    { term_id: "lightning_lane", en: "Lightning Lane", category: "Service", keep_original: true, translations: { es: "Lightning Lane", pt: "Lightning Lane", fr: "Lightning Lane", ja: "ライトニング・レーン", zh: "闪电通道 (Lightning Lane)" }, notes: "Express priority queue service. Do not translate literally." },
+    { term_id: "smart_band_plus", en: "Smart Band+", category: "Merchandise/Service", keep_original: true, translations: { es: "Smart Band+", pt: "Smart Band+", fr: "Smart Band+", ja: "スマートバンド+", zh: "智能手环+" }, notes: "Wearable RFID/Bluetooth park device." },
+    { term_id: "guest_ambassador", en: "Guest Ambassador", category: "Personnel", keep_original: false, translations: { es: "Embajador de Servicio", pt: "Embaixador de Atendimento", fr: "Ambassadeur de Service", ja: "サービスアンバサダー", zh: "服务大使" }, notes: "Theme park hospitality staff member." },
+    { term_id: "space_mountain", en: "Space Mountain", category: "Attraction", keep_original: true, translations: { es: "Space Mountain", pt: "Space Mountain", fr: "Space Mountain", ja: "スペース・マウンテン", zh: "飞越太空山" }, notes: "Futuristic indoor roller coaster." },
+    { term_id: "rise_of_the_resistance", en: "Star Wars: Rise of the Resistance", category: "Attraction", keep_original: true, translations: { es: "Star Wars: Rise of the Resistance", pt: "Star Wars: Rise of the Resistance", fr: "Star Wars: Rise of the Resistance", ja: "スター・ウォーズ：ライズ・オブ・ザ・レジスタンス", zh: "星球大战：抵抗组织崛起" }, notes: "Flagship trackless dark ride." },
+    { term_id: "haunted_mansion", en: "Haunted Mansion", category: "Attraction", keep_original: true, translations: { es: "Haunted Mansion (Mansión Embrujada)", pt: "Haunted Mansion (Mansão Assombrada)", fr: "Haunted Mansion / Phantom Manor", ja: "ホーンテッドマンション", zh: "幽灵公馆" }, notes: "Classic haunted dark ride attraction." },
+    { term_id: "rope_drop", en: "Rope Drop", category: "Park Concept", keep_original: false, translations: { es: "Apertura del parque / Entrada a primera hora", pt: "Abertura dos portões", fr: "Ouverture des portes du parc", ja: "開園（ロープドロップ）", zh: "开园时刻 (Rope Drop)" }, notes: "Arriving at park opening time." },
+    { term_id: "photopass", en: "PhotoPass", category: "Service", keep_original: true, translations: { es: "PhotoPass", pt: "PhotoPass", fr: "PhotoPass", ja: "フォトパス", zh: "乐拍通 (PhotoPass)" }, notes: "Professional in-park photography service." },
+    { term_id: "rider_switch", en: "Rider Switch", category: "Service", keep_original: false, translations: { es: "Cambio de Acompañante (Rider Switch)", pt: "Troca de Passageiro", fr: "Service d'échange d'enfants", ja: "ライダー・スイッチ", zh: "乘客轮换 (Rider Switch)" }, notes: "Parent swap service for attractions." },
+    { term_id: "single_rider", en: "Single Rider Line", category: "Queue Concept", keep_original: false, translations: { es: "Fila para Pasajero Solitario", pt: "Fila de Single Rider", fr: "File Single Rider (Passager seul)", ja: "シングルライダー", zh: "单人通道 (Single Rider)" }, notes: "Dedicated queue for solo riders." },
+    { term_id: "park_hopper", en: "Park Hopper", category: "Ticket", keep_original: true, translations: { es: "Boleto Park Hopper", pt: "Ingresso Park Hopper", fr: "Billet Park Hopper", ja: "パークホッパー", zh: "跨园门票 (Park Hopper)" }, notes: "Multi-park admission ticket." },
+    { term_id: "virtual_queue", en: "Virtual Queue", category: "Service", keep_original: false, translations: { es: "Fila Virtual", pt: "Fila Virtual", fr: "File d'attente virtuelle", ja: "スタンバイパス / バーチャルキュー", zh: "虚拟排队 (Virtual Queue)" }, notes: "In-app digital queue allocation system." }
   ];
 
   // UI Elements for Glossary Management
@@ -1204,7 +1214,8 @@ async function setupGlossary() {
   const closeAddTermModalBtn = document.getElementById('closeAddTermModalBtn');
   const cancelAddTermBtn = document.getElementById('cancelAddTermBtn');
   const addTermForm = document.getElementById('addTermForm');
-  const glossaryCountBadge = document.getElementById('glossaryCountBadge');
+  const glossarySearch = document.getElementById('glossarySearch');
+  const glossaryLangFilter = document.getElementById('glossaryLangFilter');
 
   if (openAddTermModalBtn && addTermModal) {
     openAddTermModalBtn.addEventListener('click', () => {
@@ -1226,28 +1237,43 @@ async function setupGlossary() {
       e.preventDefault();
       const en = document.getElementById('newTermEn').value.trim();
       const es = document.getElementById('newTermEs').value.trim();
+      const pt = document.getElementById('newTermPt')?.value.trim() || '';
+      const fr = document.getElementById('newTermFr')?.value.trim() || '';
+      const ja = document.getElementById('newTermJa')?.value.trim() || '';
+      const zh = document.getElementById('newTermZh')?.value.trim() || '';
       const category = document.getElementById('newTermCategory').value;
       const keep_original = document.getElementById('newTermKeepOriginal').checked;
-      const notes = document.getElementById('newTermNotes').value.trim();
+      const notes = document.getElementById('newTermNotes')?.value.trim() || '';
 
       if (!en || !es) return;
+
+      const translations = { es };
+      if (pt) translations.pt = pt;
+      if (fr) translations.fr = fr;
+      if (ja) translations.ja = ja;
+      if (zh) translations.zh = zh;
+
+      if (keep_original) {
+        if (!translations.pt) translations.pt = en;
+        if (!translations.fr) translations.fr = en;
+      }
 
       try {
         const res = await fetch('/api/glossary/terms', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ en, es, category, keep_original, notes })
+          body: JSON.stringify({ en, es, pt, fr, ja, zh, translations, category, keep_original, notes })
         });
 
         if (res.ok) {
           const result = await res.json();
-          // Update local glossary array
           const termId = result.term.term_id;
           glossaryData = glossaryData.filter(t => t.term_id !== termId && t.en.toLowerCase() !== en.toLowerCase());
           glossaryData.push(result.term);
-          renderGlossary(glossaryData);
+          applyGlossaryFilters();
           closeModal();
-          addTerminalLog(`Added protected Disney term: "${en}" ➔ "${es}"`, 'system');
+          const langCount = Object.keys(result.term.translations || {}).length;
+          addTerminalLog(`Added protected brand term: "${en}" across ${langCount} languages`, 'system');
         } else {
           alert('Failed to save term. Please try again.');
         }
@@ -1271,23 +1297,47 @@ async function setupGlossary() {
     glossaryData = fallbackTerms;
   }
 
-  renderGlossary(glossaryData);
+  function applyGlossaryFilters() {
+    const query = (glossarySearch?.value || '').trim().toLowerCase();
+    const selectedLang = glossaryLangFilter ? glossaryLangFilter.value : 'all';
+    currentGlossaryLang = selectedLang;
 
-  glossarySearch.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase();
-    const filtered = glossaryData.filter(t => 
-      t.en.toLowerCase().includes(query) || 
-      (t.category && t.category.toLowerCase().includes(query)) ||
-      (t.translations && Object.values(t.translations).some(v => v.toLowerCase().includes(query)))
-    );
-    renderGlossary(filtered);
-  });
+    let filtered = glossaryData.filter(t => {
+      const matchesQuery = !query || 
+        t.en.toLowerCase().includes(query) ||
+        (t.category && t.category.toLowerCase().includes(query)) ||
+        (t.notes && t.notes.toLowerCase().includes(query)) ||
+        (t.translations && Object.values(t.translations).some(v => String(v).toLowerCase().includes(query)));
+
+      if (selectedLang !== 'all') {
+        const hasLang = Boolean(t.translations && t.translations[selectedLang]);
+        return matchesQuery && hasLang;
+      }
+      return matchesQuery;
+    });
+
+    renderGlossary(filtered, selectedLang);
+  }
+
+  if (glossarySearch) {
+    glossarySearch.addEventListener('input', applyGlossaryFilters);
+  }
+
+  if (glossaryLangFilter) {
+    glossaryLangFilter.addEventListener('change', applyGlossaryFilters);
+  }
+
+  applyGlossaryFilters();
 }
 
-function updateGlossaryCount(count) {
+function updateGlossaryCount(count, totalUniqueLangs = 5) {
   const badge = document.getElementById('glossaryCountBadge');
   if (badge) {
     badge.innerText = `${count} Terms Active`;
+  }
+  const langsBadge = document.getElementById('glossaryLangsBadge');
+  if (langsBadge) {
+    langsBadge.innerText = `${totalUniqueLangs} Languages (ES, PT, FR, JA, ZH)`;
   }
 }
 
@@ -1303,8 +1353,19 @@ async function deleteGlossaryTerm(termId, termEn) {
 
     if (res.ok) {
       glossaryData = glossaryData.filter(t => t.term_id !== termId);
-      renderGlossary(glossaryData);
-      addTerminalLog(`Removed glossary term: "${termEn}"`, 'system');
+      const query = (document.getElementById('glossarySearch')?.value || '').trim().toLowerCase();
+      const selectedLang = document.getElementById('glossaryLangFilter')?.value || 'all';
+      let filtered = glossaryData.filter(t => {
+        const matchesQuery = !query || 
+          t.en.toLowerCase().includes(query) ||
+          (t.translations && Object.values(t.translations).some(v => String(v).toLowerCase().includes(query)));
+        if (selectedLang !== 'all') {
+          return matchesQuery && Boolean(t.translations && t.translations[selectedLang]);
+        }
+        return matchesQuery;
+      });
+      renderGlossary(filtered, selectedLang);
+      addTerminalLog(`Removed brand term: "${termEn}"`, 'system');
     } else {
       alert('Could not delete term.');
     }
@@ -1314,14 +1375,23 @@ async function deleteGlossaryTerm(termId, termEn) {
   }
 }
 
-function renderGlossary(terms) {
+function renderGlossary(terms, selectedLang = 'all') {
   glossaryGrid.innerHTML = '';
-  updateGlossaryCount(terms.length);
+  
+  // Calculate unique languages present across terms
+  const allLangs = new Set();
+  terms.forEach(t => {
+    if (t.translations) {
+      Object.keys(t.translations).forEach(k => allLangs.add(k));
+    }
+  });
+  updateGlossaryCount(terms.length, Math.max(allLangs.size, 1));
 
   if (terms.length === 0) {
     glossaryGrid.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; color: #94a3b8; padding: 40px 0;">
-        <p>No matching terms found in glossary.</p>
+        <p style="font-size: 1.1rem; margin-bottom: 6px;">No matching terms found.</p>
+        <span style="font-size: 0.85rem; color: #64748b;">Try adjusting your search query or language filter.</span>
       </div>
     `;
     return;
@@ -1330,14 +1400,49 @@ function renderGlossary(terms) {
   terms.forEach(t => {
     const card = document.createElement('div');
     card.className = 'glossary-card';
-    const es = (t.translations && t.translations.es) || t.en;
+    
+    const availableLangs = t.translations ? Object.keys(t.translations) : [];
+
+    // Language pills bar (shows at a glance which languages this term has)
+    const pillsHtml = ['es', 'pt', 'fr', 'ja', 'zh'].map(code => {
+      const meta = GLOSSARY_LANG_MAP[code] || { name: code.toUpperCase(), flag: '🌐' };
+      const has = availableLangs.includes(code);
+      return `<span class="lang-pill ${has ? 'present' : 'missing'}" title="${meta.name}: ${has ? t.translations[code] : 'Not specified'}">${meta.flag} ${code.toUpperCase()}</span>`;
+    }).join('');
+
+    let transDisplayHtml = '';
+    if (selectedLang === 'all') {
+      const rows = Object.entries(t.translations || {}).map(([lang, val]) => {
+        const meta = GLOSSARY_LANG_MAP[lang] || { name: lang.toUpperCase(), flag: '🌐' };
+        return `
+          <div class="translation-row">
+            <span class="trans-lang-tag">${meta.flag} ${lang.toUpperCase()}</span>
+            <span class="trans-text">${val}</span>
+          </div>
+        `;
+      }).join('');
+      transDisplayHtml = `<div class="term-translations-list">${rows || '<span style="color:#64748b">No translations</span>'}</div>`;
+    } else {
+      const meta = GLOSSARY_LANG_MAP[selectedLang] || { name: selectedLang.toUpperCase(), flag: '🌐' };
+      const val = (t.translations && t.translations[selectedLang]) || t.en;
+      const otherLangs = availableLangs.filter(l => l !== selectedLang).map(l => l.toUpperCase());
+      transDisplayHtml = `
+        <div class="term-target-focus">
+          <span class="trans-lang-tag active">${meta.flag} ${selectedLang.toUpperCase()}</span>
+          <span class="term-target-value">${val}</span>
+        </div>
+        <div class="other-translations-hint">Also in: ${otherLangs.length > 0 ? otherLangs.join(', ') : 'None'}</div>
+      `;
+    }
+
     card.innerHTML = `
       <div class="glossary-card-header">
         <span class="term-en">${t.en}</span>
-        <span class="term-category">${t.category || 'Disney Term'}</span>
+        <span class="term-category">${t.category || 'Brand Term'}</span>
       </div>
-      <div class="term-target">➔ ${es}</div>
-      <div class="term-notes">${t.keep_original ? '🔒 Preserve English Brand' : '🔄 Contextual Translation'} • ${t.notes || ''}</div>
+      <div class="term-lang-badges">${pillsHtml}</div>
+      ${transDisplayHtml}
+      <div class="term-notes">${t.keep_original ? '🔒 Preserve Brand Name' : '🔄 Contextual Translation'} • ${t.notes || ''}</div>
       <div class="glossary-card-footer">
         <span style="font-size: 0.68rem; color: #64748b;">ID: <code>${t.term_id}</code></span>
         <button class="btn-delete-term" title="Delete term" data-term-id="${t.term_id}" data-term-en="${t.en}">🗑️ Remove</button>
