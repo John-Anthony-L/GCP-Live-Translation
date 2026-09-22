@@ -125,21 +125,21 @@ Disney-live-translation-POC/
 
 ---
 
-## 🚀 Deployment to GCP (Argolis Environment)
+## 🚀 Deployment to GCP (Cloud Run)
 
 ### Prerequisites
-- Google Cloud SDK (`gcloud`) authenticated to your Argolis account.
-- GCP Project: `disney-parks-live-translation`.
+- Google Cloud SDK (`gcloud`) installed and authenticated (`gcloud auth login`).
+- Active Google Cloud Project with billing enabled.
 
 ### 1-Click Cloud Run Deployment
-Run the deployment script:
+Run the deployment script (optionally passing your own `PROJECT_ID`):
 ```bash
-./infra/deploy.sh
+PROJECT_ID="your-gcp-project-id" ./infra/deploy.sh
 ```
 
 The script will automatically:
-1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `run`, `storage`).
-2. Create the Cloud Storage glossary bucket `gs://disney-parks-live-translation-glossaries`.
+1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `run`, `storage`, `artifactregistry`, `cloudbuild`).
+2. Create the Cloud Storage glossary bucket `gs://${PROJECT_ID}-glossaries`.
 3. Upload `disney_glossary_en_es.csv` and configure Translation API Advanced.
 4. Build and deploy **Gemini Live Proxy**, **Translation Pipeline** (configured with Chirp 3 GA and Cloud DLP), and **Web Client** containers to Cloud Run in `us-central1`.
 5. Output live Cloud Run service URLs.
