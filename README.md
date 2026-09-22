@@ -210,13 +210,6 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 | `WS` | `/ws/stream-translate` | **Real-time bidirectional WebSocket** for live sentence streaming, interim text, DLP scrubbing, and TTS audio chunks |
 | `GET` | `/docs` | Interactive Swagger / OpenAPI documentation |
 
-### Service 1: Gemini Live Proxy (Port 8080)
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Healthcheck and Vertex AI Live API connection status |
-| `WS` | `/live-translate` | **Bidirectional WebSocket** bridging client PCM audio to Gemini 2.0 Multimodal Live API with contextual glossary injection |
-
 ---
 
 ## 🚀 Getting Started with Your Own Google Cloud Project
@@ -268,15 +261,14 @@ gcloud services enable \
 docker compose up --build
 ```
 * **Web Client & Management Dashboard:** `http://localhost:3000`
-* **Gemini Live Proxy (WS):** `ws://localhost:8080/live-translate`
-* **Translation Pipeline:** `http://localhost:8081` (API Docs: `http://localhost:8081/docs`)
+* **Translation Pipeline (Chirp 3 STT, DLP, MT v3, Chirp 3 HD TTS):** `http://localhost:8081` (API Docs: `http://localhost:8081/docs`)
 
 ---
 
 ## 📖 Disney Glossary & Terminology Management
 
 The system preserves Disney brand equity, attractions, and park terms using a dual-layer enforcement:
-1. **Prompt Biasing**: Injected into Gemini Live and Chirp 3 Speech Adaptation (+20 boost).
+1. **Prompt Biasing**: Injected into Chirp 3 Speech Adaptation (+20.0 score) and Gemini 3.5 Transcribe.
 2. **Cloud Translation API Advanced v3**: Deterministic TSV/CSV glossary mapping.
 
 ### Adding & Removing Terms via Web UI
@@ -310,9 +302,8 @@ In the web interface at `http://localhost:3000`:
 | `PROJECT_ID` | `your-gcp-project-id` | Your Google Cloud Project ID |
 | `LOCATION` | `us-central1` | Primary GCP Region for Cloud Run, Translation v3, and DLP |
 | `CHIRP_REGION` | `us` | Multi-region endpoint for Speech-to-Text v2 **Chirp 3 GA** |
-| `STT_MODEL` | `chirp_3` | Speech recognition model identifier (`chirp_3`, `latest_short`) |
+| `STT_MODEL` | `chirp_3` | Speech recognition model identifier (`chirp_3`, `gemini-3.5-transcribe`, `latest_short`) |
+| `TTS_VOICE_NAME` | `es-US-Chirp3-HD-Aoede` | Default Google Cloud **Chirp 3 HD** voice for Latin American Spanish |
 | `GLOSSARY_ID` | `disney-parks-glossary-en-es` | Cloud Translation API Advanced glossary resource ID |
 | `GLOSSARY_BUCKET` | `[PROJECT_ID]-glossaries` | Cloud Storage bucket storing Disney CSV glossaries |
-| `GEMINI_LIVE_MODEL` | `gemini-2.0-flash-exp` | Vertex AI Gemini Multimodal Live model |
-| `DEFAULT_VOICE` | `Aoede` | Default Gemini Live voice personality |
 

@@ -1,23 +1,6 @@
 version: '3.8'
 
 services:
-  gemini-live-proxy:
-    build:
-      context: .
-      dockerfile: services/gemini-live-proxy/Dockerfile
-    ports:
-      - "8080:8080"
-    environment:
-      - PORT=8080
-      - PROJECT_ID=${PROJECT_ID:-disney-parks-live-translation}
-      - LOCATION=${LOCATION:-us-central1}
-      - GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-2.0-flash-exp}
-      - DEFAULT_VOICE=${DEFAULT_VOICE:-Aoede}
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
-    volumes:
-      - ~/.config/gcloud/application_default_credentials.json:/app/service-account.json:ro
-      - ./glossaries:/app/glossaries:ro
-
   translation-pipeline:
     build:
       context: .
@@ -45,8 +28,6 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - GEMINI_LIVE_PROXY_URL=ws://localhost:8080/live-translate
       - TRANSLATION_PIPELINE_URL=http://localhost:8081
     depends_on:
-      - gemini-live-proxy
       - translation-pipeline

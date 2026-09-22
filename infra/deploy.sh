@@ -84,6 +84,7 @@ echo "✅ Translation Pipeline URL: ${PIPELINE_URL}"
 # 6. Deploy Service 3: Web & Mobile Testbed Client
 echo ""
 echo "🚀 Step 5: Deploying Web & Mobile Testbed to Cloud Run..."
+WS_PIPELINE_URL="${PIPELINE_URL/https:\/\//wss:\/\/}/ws/stream-translate"
 WS_PROXY_URL="${PROXY_URL/https:\/\//wss:\/\/}/live-translate"
 gcloud run deploy disney-live-web-client \
     --source services/web-client \
@@ -92,7 +93,7 @@ gcloud run deploy disney-live-web-client \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "GEMINI_LIVE_PROXY_URL=${WS_PROXY_URL},TRANSLATION_PIPELINE_URL=${PIPELINE_URL}" \
+    --set-env-vars "TRANSLATION_PIPELINE_URL=${PIPELINE_URL},TRANSLATION_PIPELINE_WS_URL=${WS_PIPELINE_URL},GEMINI_LIVE_PROXY_URL=${WS_PROXY_URL}" \
     --cpu 1 \
     --memory 1Gi
 
@@ -102,8 +103,7 @@ echo ""
 echo "======================================================================"
 echo "✨ DEPLOYMENT COMPLETE ✨"
 echo "======================================================================"
-echo "🏰 Web & Mobile Testbed:      ${CLIENT_URL}"
-echo "⚡ Gemini Live Proxy (WS):     ${WS_PROXY_URL}"
-echo "⚙️ Translation Pipeline (API):  ${PIPELINE_URL}"
-echo "📱 iOS App Config: Point serverBaseUrl to ${WS_PROXY_URL}"
+echo "🏰 Web & Mobile Testbed:        ${CLIENT_URL}"
+echo "⚙️ Translation Pipeline (API):   ${PIPELINE_URL}"
+echo "⚡ Pipeline WebSocket:           ${WS_PIPELINE_URL}"
 echo "======================================================================"
