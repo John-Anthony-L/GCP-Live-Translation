@@ -3,18 +3,52 @@ set -e
 
 # ==============================================================================
 # Enterprise Live Translation - GCP Cloud Run Multi-Container Deployer
-# Target Project: your-gcp-project-id
-# Region: us-central1
 # ==============================================================================
 
-PROJECT_ID="${PROJECT_ID:-your-gcp-project-id}"
-REGION="${REGION:-us-central1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# 1. Load .env file from root directory if present
+if [ -f "${ROOT_DIR}/.env" ]; then
+  echo "📄 Loading environment variables from ${ROOT_DIR}/.env..."
+  set -a
+  source "${ROOT_DIR}/.env"
+  set +a
+elif [ -f ".env" ]; then
+  echo "📄 Loading environment variables from .env..."
+  set -a
+  source ".env"
+  set +a
+fi
+
+PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT}}"
+
+# Fallback to current gcloud CLI configuration if PROJECT_ID is empty or placeholder
+if [ -z "${PROJECT_ID}" ] || [ "${PROJECT_ID}" = "your-gcp-project-id" ]; then
+  GCLOUD_ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null || true)"
+  if [ -n "${GCLOUD_ACTIVE_PROJECT}" ] && [ "${GCLOUD_ACTIVE_PROJECT}" != "(unset)" ]; then
+    PROJECT_ID="${GCLOUD_ACTIVE_PROJECT}"
+  fi
+fi
+
+if [ -z "${PROJECT_ID}" ] || [ "${PROJECT_ID}" = "your-gcp-project-id" ]; then
+  echo "❌ ERROR: PROJECT_ID is not configured."
+  echo "Please set PROJECT_ID in your .env file or export it in your shell:"
+  echo "   PROJECT_ID=your-actual-project-id ./infra/deploy.sh"
+  echo "or configure gcloud:"
+  echo "   gcloud config set project <your-actual-project-id>"
+  exit 1
+fi
+
+REGION="${REGION:-${LOCATION:-us-central1}}"
 BUCKET_NAME="${PROJECT_ID}-glossaries"
 
 CSV_FILE="brand_glossary_en_es.csv"
-if [ ! -f "glossaries/${CSV_FILE}" ]; then
+if [ ! -f "${ROOT_DIR}/glossaries/${CSV_FILE}" ]; then
   CSV_FILE="disney_glossary_en_es.csv"
 fi
+
+cd "${ROOT_DIR}"
 
 echo "======================================================================"
 echo "🌐 Deploying Enterprise Live Translation POC to Google Cloud Run"
