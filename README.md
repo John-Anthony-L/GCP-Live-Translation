@@ -1,4 +1,4 @@
-# 🌐 Enterprise Live Translation POC (Google Cloud)
+# Enterprise Live Translation POC (Google Cloud)
 
 A production-ready, multi-container Proof of Concept (POC) evaluating **real-time live speech translation** for theme park & resort guest service hosts, hospitality personnel, and international guests, featuring **custom vocabulary and multi-language glossary injection** for brand terms, attraction names, and operations.
 
@@ -6,22 +6,22 @@ Powered by Google Cloud's **100% General Availability (GA)** enterprise stack: *
 
 ---
 
-## 📊 Enterprise Production Pipeline Architecture
+## Enterprise Production Pipeline Architecture
 
-| Architecture Pillar | Enterprise Production Pipeline Specification 🌟 |
+| Architecture Pillar | Enterprise Production Pipeline Specification |
 | :--- | :--- |
 | **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS |
-| **Latency Profile** | ⚡ **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) |
+| **Latency Profile** | **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) |
 | **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Phrase Set boost) |
 | **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, Wristband UIDs, Security PINs) |
 | **Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Multi-Language Catalog (ES, PT, FR, JA, ZH) |
 | **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) |
-| **Compliance & Readiness** | 🔒 **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant |
+| **Compliance & Readiness** | **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant |
 | **Primary Use Case** | **In-Park Host ↔ Guest Countertops, Kiosks & Mobile Web** |
 
 ---
 
-## 🏛️ System Architecture
+## System Architecture
 
 ```mermaid
 flowchart TD
@@ -68,14 +68,13 @@ flowchart TD
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 GCP-Live-Translation/
 ├── glossaries/
 │   ├── enterprise_parks_glossary.json  # Structured multi-language terms, phonetics & rules
-│   ├── brand_glossary_en_es.csv        # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
-│   └── brand_glossary_es_en.csv        # Cloud Translation API Advanced CSV glossary (ES ➔ EN)
+│   └── brand_glossary_en_es.csv        # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
 ├── services/
 │   ├── translation-pipeline/           # Core Service: Production GA Pipeline (FastAPI)
 │   │   ├── main.py                     # FastAPI REST & WebSocket endpoints (/ws/stream-translate)
@@ -104,7 +103,7 @@ GCP-Live-Translation/
 
 ---
 
-## 🚀 Deployment to GCP (Cloud Run)
+## Deployment to GCP (Cloud Run)
 
 ### Prerequisites
 - Google Cloud SDK (`gcloud`) installed and authenticated (`gcloud auth login`).
@@ -125,7 +124,7 @@ The script will automatically:
 
 ---
 
-## 🧪 Testing the Live Translation POC
+## Testing the Live Translation POC
 
 ### Live 2-Way Translation Testbed (`http://localhost:3000`)
 Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop, tablet, or mobile browser:
@@ -135,12 +134,12 @@ Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` wh
    - 🇪🇸 **English ⇄ Spain Spanish (`es-ES`)**
    - 🇧🇷 Portuguese, 🇫🇷 French, 🇯🇵 Japanese, 🇨🇳 Mandarin
 2. **Select Speech-to-Text Model**:
-   - 🎙️ **Chirp 3 (Speech v2 GA)** *(Recommended)*: High-accuracy foundational model with built-in neural denoiser and brand phrase adaptation.
-   - ⚡ **Cloud Speech (`latest_short`)**: Ultra-fast single-utterance baseline model (< 10s commands).
-   - ✨ **Gemini 3.5 Live Transcribe**: Multimodal transcription preview.
+   - **Chirp 3 (Speech v2 GA)** *(Recommended)*: High-accuracy foundational model with built-in neural denoiser and brand phrase adaptation.
+   - **Cloud Speech (`latest_short`)**: Ultra-fast single-utterance baseline model (< 10s commands).
+   - **Gemini 3.5 Live Transcribe**: Multimodal transcription preview.
 3. **Select Mode & Speak**:
-   - **Team Host 🎤 / Guest 🌐 Push-to-Talk**: Hold or click to speak individual turns.
-   - **🎙️ Ambient 2-Way Live Stream**: Hands-free conversation mode where the system continuously listens, detects speech boundaries, redacts PII, translates, and plays back synthesized audio.
+   - **Team Host / Guest Push-to-Talk**: Hold or click to speak individual turns.
+   - **Ambient 2-Way Live Stream**: Hands-free conversation mode where the system continuously listens, detects speech boundaries, redacts PII, translates, and plays back synthesized audio.
 4. **Try Sample Phrases**:
    - *"Excuse me, where is the Lightning Lane entrance for Space Mountain?"*
    - *"Do I need a Virtual Queue for Star Wars: Rise of the Resistance?"*
@@ -148,48 +147,48 @@ Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` wh
 
 ---
 
-## 🛡️ Cloud Sensitive Data Protection (DLP) & Privacy Engine
+## Cloud Sensitive Data Protection (DLP) & Privacy Engine
 
-The translation pipeline integrates **Google Cloud Sensitive Data Protection (DLP)** (`dlp_helper.py`) directly between Speech Recognition and Machine Translation. This ensures that no guest PII, payment info, or security PINs are ever logged, sent to external models, or spoken aloud in public park areas.
+The translation pipeline integrates **Google Cloud Sensitive Data Protection (DLP)** (`dlp_helper.py`) directly between Speech Recognition and Machine Translation. This ensures that no guest PII, payment info, or security PINs are ever logged, sent to external models, or spoken aloud in public areas.
 
 ### Supported InfoTypes Catalog
 
-| InfoType Identifier | Category | Icon | Protected Information & Pattern | Default Mode |
-| :--- | :--- | :---: | :--- | :---: |
-| `CREDIT_CARD_NUMBER` | PCI Compliance | 💳 | Visa, MasterCard, Amex, Discover card numbers & CVVs | **Active** |
-| `PHONE_NUMBER` | Contact Info | 📱 | US & International telephone and mobile numbers | **Active** |
-| `EMAIL_ADDRESS` | Contact Info | 📧 | Guest and Host personal & work email addresses | **Active** |
-| `PERSON_NAME` | COPPA / Minors | 👶 | Full names of guests, children, and family members | Optional (Kiosk) |
-| `US_PASSPORT` | Government ID | 🛂 | Passport numbers, national ID cards, driver's licenses | **Active** |
-| `RESERVATION_CONFIRMATION_ID` | Hospitality Custom | 🎫 | Resort, hotel, and park booking confirmation numbers (`RES-982341`, `CONF-83921`) | **Active** |
-| `SMART_WRISTBAND_UID` | Hospitality Custom | 📡 | Smart wearable RFID / NFC serial numbers (`WB-A1B2C3D4`) | **Active** |
-| `ACCOUNT_SECURITY_PIN` | Hospitality Custom | 🔑 | 4-to-6 digit security PINs used for guest verification & room access | **Active** |
+| InfoType Identifier | Category | Protected Information & Pattern | Default Mode |
+| :--- | :--- | :--- | :---: |
+| `CREDIT_CARD_NUMBER` | PCI Compliance | Visa, MasterCard, Amex, Discover card numbers & CVVs | **Active** |
+| `PHONE_NUMBER` | Contact Info | US & International telephone and mobile numbers | **Active** |
+| `EMAIL_ADDRESS` | Contact Info | Guest and Host personal & work email addresses | **Active** |
+| `PERSON_NAME` | COPPA / Minors | Full names of guests, children, and family members | Optional (Kiosk) |
+| `US_PASSPORT` | Government ID | Passport numbers, national ID cards, driver's licenses | **Active** |
+| `RESERVATION_CONFIRMATION_ID` | Hospitality Custom | Resort, hotel, and booking confirmation numbers (`RES-982341`, `CONF-83921`) | **Active** |
+| `SMART_WRISTBAND_UID` | Hospitality Custom | Smart wearable RFID / NFC serial numbers (`WB-A1B2C3D4`) | **Active** |
+| `ACCOUNT_SECURITY_PIN` | Hospitality Custom | 4-to-6 digit security PINs used for guest verification & room access | **Active** |
 
 ### Deployment Presets
 
 The Web Testbed and backend support dynamic preset modes depending on the operational context:
-1. 🔒 **Public Park Kiosk**: Enables all 8 privacy filters, including `PERSON_NAME` for strict COPPA / minor privacy compliance at self-service kiosks.
-2. 🏨 **Front Desk & Concierge** *(Default)*: Enforces PCI-DSS, passport, and custom hospitality identifiers while allowing guest names for warm, personalized host greetings.
-3. 📞 **Over-The-Phone Booking (Bypass)**: Temporarily bypasses redaction for authorized call-center agents who need to collect phone numbers and reservation IDs.
+1. **Public Kiosk**: Enables all 8 privacy filters, including `PERSON_NAME` for strict COPPA / minor privacy compliance at self-service kiosks.
+2. **Front Desk & Concierge** *(Default)*: Enforces PCI-DSS, passport, and custom hospitality identifiers while allowing guest names for warm, personalized greetings.
+3. **Over-The-Phone Booking (Bypass)**: Temporarily bypasses redaction for authorized call-center agents who need to collect phone numbers and reservation IDs.
 
 ### Interactive DLP Sandbox
 The Web Client features a dedicated **DLP Inspection & Redaction Sandbox** allowing operators to test custom phrases, inspect detection latency (typically < 35ms), and view granular entity match breakdowns in real time.
 
 ---
 
-## ⚡ Live Telemetry & Running Transcript Terminal
+## Live Telemetry & Running Transcript Terminal
 
 The Web Client includes a real-time **Telemetry Terminal** that monitors every hop of the live translation pipeline:
-* **🎙️ Mic Input / VAD**: Live RMS audio level meter displaying speech energy in real time.
-* **🗣️ STT Capture**: Live interim and finalized transcript streaming with model attribution (`chirp_3`).
-* **🛡️ Cloud DLP**: Real-time redaction status indicating detected entities and sanitization latency.
-* **🌐 Translation LLM**: Progressive translation output adhering to brand glossary rules.
-* **🔊 TTS Speech**: Audio playback state and duration metrics.
-* **📜 Live Log Stream**: High-resolution event stream for debugging network latency, WebSocket boundaries, and payload sizes.
+* **Mic Input / VAD**: Live RMS audio level meter displaying speech energy in real time.
+* **STT Capture**: Live interim and finalized transcript streaming with model attribution (`chirp_3`).
+* **Cloud DLP**: Real-time redaction status indicating detected entities and sanitization latency.
+* **Translation Engine**: Progressive translation output adhering to brand glossary rules.
+* **TTS Speech**: Audio playback state and duration metrics.
+* **Live Log Stream**: High-resolution event stream for debugging network latency, WebSocket boundaries, and payload sizes.
 
 ---
 
-## 🔌 API & WebSocket Endpoints Reference
+## API & WebSocket Endpoints Reference
 
 ### Service 2: Translation Pipeline (Port 8081)
 
@@ -205,7 +204,7 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 
 ---
 
-## 🚀 Getting Started with Your Own Google Cloud Project
+## Getting Started with Your Own Google Cloud Project
 
 To run this POC in your own GCP environment (without accessing any external project):
 
@@ -258,7 +257,7 @@ docker compose up --build
 
 ---
 
-## 📖 Brand Glossary & Multi-Language Management
+## Brand Glossary & Multi-Language Management
 
 The system preserves brand equity, attractions, and park terms using dual-layer enforcement across multiple target languages (**Spanish, Portuguese, French, Japanese, and Mandarin Chinese**):
 1. **Prompt Biasing**: Injected into Chirp 3 Speech Adaptation (+20.0 score) and Gemini 3.5 Transcribe.
@@ -266,11 +265,11 @@ The system preserves brand equity, attractions, and park terms using dual-layer 
 
 ### Multi-Language View & Management via Web UI
 In the web interface at `http://localhost:3000`:
-1. Click on the **"📖 Brand Glossary & Languages"** tab.
+1. Click on the **"Brand Glossary & Languages"** tab.
 2. **View Covered Languages**: Each term card displays language chips (`ES`, `PT`, `FR`, `JA`, `ZH`) indicating which languages have localized translations.
-3. **Filter by Language**: Use the **"🌐 View Language"** dropdown in the toolbar to focus on a specific language (e.g. Spanish, French, Japanese) or view all translations simultaneously.
-4. **Add New Terms**: Click **"➕ Add New Term"** to enter the English concept and translations for Spanish, Portuguese, French, Japanese, and Mandarin.
-5. **Remove Terms**: Click the **"🗑️ Remove"** button on any card to delete it from the active catalog and disk storage.
+3. **Filter by Language**: Use the **"View Language"** dropdown in the toolbar to focus on a specific language (e.g. Spanish, French, Japanese) or view all translations simultaneously.
+4. **Add New Terms**: Click **"Add New Term"** to enter the English concept and translations for Spanish, Portuguese, French, Japanese, and Mandarin.
+5. **Remove Terms**: Click the **"Remove"** button on any card to delete it from the active catalog and disk storage.
 
 ### Programmatic Glossary API
 * **List All Terms:** `GET /api/glossary`
@@ -295,7 +294,7 @@ In the web interface at `http://localhost:3000`:
 
 ---
 
-## ⚙️ Environment Variables Reference
+## Environment Variables Reference
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
