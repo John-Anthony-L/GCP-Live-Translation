@@ -22,11 +22,7 @@ app.get('/config.json', (req, res) => {
 const getGlossaryPath = () => {
   const rootEnterprise = path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json');
   if (fs.existsSync(rootEnterprise)) return rootEnterprise;
-  const rootGlossary = path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json');
-  if (fs.existsSync(rootGlossary)) return rootGlossary;
-  const localEnterprise = path.join(__dirname, 'enterprise_parks_glossary.json');
-  if (fs.existsSync(localEnterprise)) return localEnterprise;
-  return path.join(__dirname, 'disney_parks_glossary.json');
+  return path.join(__dirname, 'enterprise_parks_glossary.json');
 };
 
 // Enterprise Brand Glossary API endpoints
@@ -72,9 +68,7 @@ app.post('/api/glossary/terms', (req, res) => {
 
     const targetPaths = [
       path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
-      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
-      path.join(__dirname, 'enterprise_parks_glossary.json'),
-      path.join(__dirname, 'disney_parks_glossary.json')
+      path.join(__dirname, 'enterprise_parks_glossary.json')
     ];
 
     let saved = false;
@@ -105,9 +99,7 @@ app.put('/api/glossary/terms/:termId', (req, res) => {
 
     const targetPaths = [
       path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
-      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
-      path.join(__dirname, 'enterprise_parks_glossary.json'),
-      path.join(__dirname, 'disney_parks_glossary.json')
+      path.join(__dirname, 'enterprise_parks_glossary.json')
     ];
 
     let updatedTerm = null;
@@ -150,9 +142,7 @@ app.delete('/api/glossary/terms/:termId', (req, res) => {
     const { termId } = req.params;
     const targetPaths = [
       path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
-      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
-      path.join(__dirname, 'enterprise_parks_glossary.json'),
-      path.join(__dirname, 'disney_parks_glossary.json')
+      path.join(__dirname, 'enterprise_parks_glossary.json')
     ];
 
     let deleted = false;
@@ -183,8 +173,7 @@ app.delete('/api/glossary/terms/:termId', (req, res) => {
 function syncCsvFromTerms(terms) {
   try {
     const csvPaths = [
-      path.resolve(__dirname, '../../glossaries/brand_glossary_en_es.csv'),
-      path.resolve(__dirname, '../../glossaries/disney_glossary_en_es.csv')
+      path.resolve(__dirname, '../../glossaries/brand_glossary_en_es.csv')
     ];
     const lines = terms.map(t => `${t.en},${(t.translations && t.translations.es) || t.en}`);
     const csvContent = lines.join('\n');

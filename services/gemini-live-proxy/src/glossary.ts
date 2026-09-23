@@ -31,12 +31,7 @@ export function loadGlossary(): GlossaryData {
     path.resolve(process.cwd(), 'glossaries/enterprise_parks_glossary.json'),
     path.resolve(__dirname, '../../../glossaries/enterprise_parks_glossary.json'),
     path.resolve(__dirname, '../glossaries/enterprise_parks_glossary.json'),
-    path.resolve(__dirname, './enterprise_parks_glossary.json'),
-    path.resolve(process.cwd(), 'disney_parks_glossary.json'),
-    path.resolve(process.cwd(), 'glossaries/disney_parks_glossary.json'),
-    path.resolve(__dirname, '../../../glossaries/disney_parks_glossary.json'),
-    path.resolve(__dirname, '../glossaries/disney_parks_glossary.json'),
-    path.resolve(__dirname, './disney_parks_glossary.json')
+    path.resolve(__dirname, './enterprise_parks_glossary.json')
   ];
 
   for (const p of potentialPaths) {

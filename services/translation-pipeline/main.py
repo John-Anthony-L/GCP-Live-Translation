@@ -660,9 +660,7 @@ def sync_glossary(csv_path: Optional[str] = None):
     if not target_path:
         for candidate in [
             "/app/glossaries/brand_glossary_en_es.csv",
-            "/app/glossaries/disney_glossary_en_es.csv",
-            "../../glossaries/brand_glossary_en_es.csv",
-            "../../glossaries/disney_glossary_en_es.csv"
+            "../../glossaries/brand_glossary_en_es.csv"
         ]:
             if os.path.exists(candidate):
                 target_path = candidate

@@ -44,9 +44,6 @@ REGION="${REGION:-${LOCATION:-us-central1}}"
 BUCKET_NAME="${PROJECT_ID}-glossaries"
 
 CSV_FILE="brand_glossary_en_es.csv"
-if [ ! -f "${ROOT_DIR}/glossaries/${CSV_FILE}" ]; then
-  CSV_FILE="disney_glossary_en_es.csv"
-fi
 
 cd "${ROOT_DIR}"
 

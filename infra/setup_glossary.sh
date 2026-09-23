@@ -41,9 +41,6 @@ GLOSSARY_ID="${GLOSSARY_ID:-brand-parks-glossary-en-es}"
 BUCKET_NAME="${PROJECT_ID}-glossaries"
 
 CSV_FILE="brand_glossary_en_es.csv"
-if [ ! -f "glossaries/${CSV_FILE}" ]; then
-  CSV_FILE="disney_glossary_en_es.csv"
-fi
 
 echo "Configuring Cloud Translation API Advanced Glossary: ${GLOSSARY_ID}..."
 
