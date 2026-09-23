@@ -6,18 +6,18 @@ Powered by Google Cloud's **100% General Availability (GA)** enterprise stack: *
 
 ---
 
-## 📊 Live Translation Architecture Comparison
+## 📊 Enterprise Production Pipeline Architecture
 
-| Architecture Pillar | **Enterprise Production Pipeline (Primary)** 🌟 | **Multimodal Live Preview (Experimental)** |
-| :--- | :--- | :--- |
-| **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS | **Speech-to-Speech (S2S)** Bidirectional WebSocket |
-| **Latency Profile** | ⚡ **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) | ⚡ **450ms – 850ms** (Simultaneous audio turns) |
-| **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Phrase Set boost) | Gemini Live Audio Transcription / Gemini 3.5 Live |
-| **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, Wristband UIDs, Security PINs) | Prompt-level safety filters |
-| **Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Multi-Language Catalog (ES, PT, FR, JA, ZH) | Contextual System Prompt injection |
-| **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) | Built-in Gemini Live audio personas |
-| **Compliance & Readiness** | 🔒 **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant | Preview features, non-deterministic phrasing |
-| **Primary Use Case** | **In-Park Host ↔ Guest Countertops, Kiosks & Mobile Web** | Conversational dialogue exploration |
+| Architecture Pillar | Enterprise Production Pipeline Specification 🌟 |
+| :--- | :--- |
+| **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS |
+| **Latency Profile** | ⚡ **600ms – 1,100ms** (Sentence-boundary streaming with audio trim) |
+| **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 (Chirp 3 GA, multi-region `us`)** with Speech Adaptation (+20 Phrase Set boost) |
+| **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, Wristband UIDs, Security PINs) |
+| **Brand Glossary** | **100% Deterministic Cloud Glossary** (TSV/CSV dictionary lock) + Multi-Language Catalog (ES, PT, FR, JA, ZH) |
+| **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) |
+| **Compliance & Readiness** | 🔒 **100% GA APIs**, audit-logged, zero audio retention options, PCI & COPPA compliant |
+| **Primary Use Case** | **In-Park Host ↔ Guest Countertops, Kiosks & Mobile Web** |
 
 ---
 
@@ -29,11 +29,7 @@ flowchart TD
         Web["<b>Web Client (Browser / Mobile Web)</b><br/>• Mic Audio Capture (16kHz PCM)<br/>• Live Dual Captions Display<br/>• FIFO Audio Playback Queue"]
     end
 
-    subgraph Gateway["Ingress & Session Management"]
-        Proxy["<b>Gemini Live Proxy / WebSocket Gateway</b><br/>(Cloud Run)"]
-    end
-
-    subgraph Pipeline["Enterprise Translation & Safety Pipeline"]
+    subgraph Pipeline["Enterprise Translation & Safety Pipeline (Cloud Run)"]
         direction TB
         STT["<b>1. Speech-to-Text (STT)</b><br/>• Chirp 3 (Speech v2 GA in us multi-region)<br/>• Brand Phrase Biasing (+20.0 Boost)<br/>• Cloud Speech v1 fallback (latest_short)"]
         DLP["<b>2. Sensitive Data Protection (Cloud DLP)</b><br/>• Real-time PII & PCI-DSS Redaction<br/>• Enterprise IDs: Smart Wristband UID, PIN, Res #"]
@@ -47,8 +43,7 @@ flowchart TD
     end
 
     %% Audio input flow
-    Web -->|"Live Mic Audio (PCM/Opus)"| Proxy
-    Proxy -->|"Audio Stream"| STT
+    Web -->|"Live Mic Audio (PCM 16kHz)"| STT
     STT -->|"Raw Transcript"| DLP
     DLP -->|"Redacted Text"| Trans
     Trans -->|"Translated Text"| TTS
@@ -63,12 +58,10 @@ flowchart TD
 
     %% Styling
     classDef clientStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef proxyStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
     classDef pipeStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
     classDef outStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
     class Web clientStyle;
-    class Proxy proxyStyle;
     class STT,DLP,Trans,TTS pipeStyle;
     class AudioOut,TextOut outStyle;
 ```

@@ -20,9 +20,10 @@
         "pt": "Lightning Lane",
         "fr": "Lightning Lane",
         "ja": "ライトニング・レーン",
-        "zh": "闪电通道 (Lightning Lane)"
+        "zh": "闪电通道 (Lightning Lane)",
+        "de": "Lightning Lane"
       },
-      "notes": "Express queue service. Do not translate literally."
+      "notes": "Express queue service. Priority pass."
     },
     {
       "term_id": "magicband_plus",

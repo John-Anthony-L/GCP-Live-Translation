@@ -85,18 +85,8 @@ app.post('/api/glossary/terms', (req, res) => {
         data.terms = data.terms.filter(t => t.term_id !== termId && t.en.toLowerCase() !== en.trim().toLowerCase());
         data.terms.push(newTerm);
         fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+        syncCsvFromTerms(data.terms);
         saved = true;
-      }
-    }
-
-    // Also update CSV file if it exists
-    const csvPaths = [
-      path.resolve(__dirname, '../../glossaries/brand_glossary_en_es.csv'),
-      path.resolve(__dirname, '../../glossaries/disney_glossary_en_es.csv')
-    ];
-    for (const cp of csvPaths) {
-      if (fs.existsSync(cp)) {
-        fs.appendFileSync(cp, `\n${newTerm.en},${newTerm.translations.es || newTerm.en}`);
       }
     }
 
@@ -104,6 +94,53 @@ app.post('/api/glossary/terms', (req, res) => {
   } catch (err) {
     console.error('Error adding term:', err);
     res.status(500).json({ error: 'Failed to save new term', message: err.message });
+  }
+});
+
+// Update existing glossary term
+app.put('/api/glossary/terms/:termId', (req, res) => {
+  try {
+    const { termId } = req.params;
+    const { en, category, keep_original, translations, notes, phonetic_en } = req.body;
+
+    const targetPaths = [
+      path.resolve(__dirname, '../../glossaries/enterprise_parks_glossary.json'),
+      path.resolve(__dirname, '../../glossaries/disney_parks_glossary.json'),
+      path.join(__dirname, 'enterprise_parks_glossary.json'),
+      path.join(__dirname, 'disney_parks_glossary.json')
+    ];
+
+    let updatedTerm = null;
+    for (const p of targetPaths) {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        const idx = data.terms.findIndex(t => t.term_id === termId);
+        if (idx !== -1) {
+          const current = data.terms[idx];
+          updatedTerm = {
+            ...current,
+            en: (en && en.trim()) || current.en,
+            category: (category && category.trim()) || current.category,
+            keep_original: keep_original !== undefined ? Boolean(keep_original) : current.keep_original,
+            translations: translations !== undefined ? translations : (current.translations || {}),
+            notes: notes !== undefined ? notes.trim() : (current.notes || '')
+          };
+          if (phonetic_en !== undefined) updatedTerm.phonetic_en = phonetic_en;
+          data.terms[idx] = updatedTerm;
+          fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+          syncCsvFromTerms(data.terms);
+        }
+      }
+    }
+
+    if (updatedTerm) {
+      res.json({ success: true, term: updatedTerm });
+    } else {
+      res.status(404).json({ error: `Term ${termId} not found.` });
+    }
+  } catch (err) {
+    console.error('Error updating term:', err);
+    res.status(500).json({ error: 'Failed to update term', message: err.message });
   }
 });
 
@@ -126,6 +163,7 @@ app.delete('/api/glossary/terms/:termId', (req, res) => {
         data.terms = data.terms.filter(t => t.term_id !== termId);
         if (data.terms.length < initCount) {
           fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+          syncCsvFromTerms(data.terms);
           deleted = true;
         }
       }
@@ -141,6 +179,24 @@ app.delete('/api/glossary/terms/:termId', (req, res) => {
     res.status(500).json({ error: 'Failed to delete term', message: err.message });
   }
 });
+
+function syncCsvFromTerms(terms) {
+  try {
+    const csvPaths = [
+      path.resolve(__dirname, '../../glossaries/brand_glossary_en_es.csv'),
+      path.resolve(__dirname, '../../glossaries/disney_glossary_en_es.csv')
+    ];
+    const lines = terms.map(t => `${t.en},${(t.translations && t.translations.es) || t.en}`);
+    const csvContent = lines.join('\n');
+    for (const cp of csvPaths) {
+      if (fs.existsSync(cp)) {
+        fs.writeFileSync(cp, csvContent, 'utf8');
+      }
+    }
+  } catch (e) {
+    console.warn('Warning: Failed to sync CSV files:', e.message);
+  }
+}
 
 // Fallback catalog in case backend pipeline is starting
 const DEFAULT_DLP_CATALOG = [

@@ -1187,10 +1187,27 @@ const GLOSSARY_LANG_MAP = {
   pt: { name: 'Portuguese', flag: '🇧🇷' },
   fr: { name: 'French', flag: '🇫🇷' },
   ja: { name: 'Japanese', flag: '🇯🇵' },
-  zh: { name: 'Mandarin Chinese', flag: '🇨🇳' }
+  zh: { name: 'Mandarin Chinese', flag: '🇨🇳' },
+  de: { name: 'German', flag: '🇩🇪' },
+  it: { name: 'Italian', flag: '🇮🇹' },
+  ko: { name: 'Korean', flag: '🇰🇷' },
+  nl: { name: 'Dutch', flag: '🇳🇱' },
+  ar: { name: 'Arabic', flag: '🇦🇪' },
+  ru: { name: 'Russian', flag: '🇷🇺' }
 };
 
 let currentGlossaryLang = 'all';
+let currentEditingTerm = null;
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 async function setupGlossary() {
   const fallbackTerms = [
@@ -1217,6 +1234,18 @@ async function setupGlossary() {
   const glossarySearch = document.getElementById('glossarySearch');
   const glossaryLangFilter = document.getElementById('glossaryLangFilter');
 
+  // Edit Term Modal Elements
+  const editTermModal = document.getElementById('editTermModal');
+  const closeEditTermModalBtn = document.getElementById('closeEditTermModalBtn');
+  const cancelEditTermBtn = document.getElementById('cancelEditTermBtn');
+  const editTermForm = document.getElementById('editTermForm');
+  const addPairLangSelect = document.getElementById('addPairLangSelect');
+  const addPairCustomCode = document.getElementById('addPairCustomCode');
+  const customCodeGroup = document.getElementById('customCodeGroup');
+  const addPairTextInput = document.getElementById('addPairTextInput');
+  const addPairBtn = document.getElementById('addPairBtn');
+  const deleteTermFromModalBtn = document.getElementById('deleteTermFromModalBtn');
+
   if (openAddTermModalBtn && addTermModal) {
     openAddTermModalBtn.addEventListener('click', () => {
       addTermModal.style.display = 'flex';
@@ -1224,13 +1253,201 @@ async function setupGlossary() {
     });
   }
 
-  const closeModal = () => {
+  const closeAddModal = () => {
     if (addTermModal) addTermModal.style.display = 'none';
     if (addTermForm) addTermForm.reset();
   };
 
-  if (closeAddTermModalBtn) closeAddTermModalBtn.addEventListener('click', closeModal);
-  if (cancelAddTermBtn) cancelAddTermBtn.addEventListener('click', closeModal);
+  const closeEditModal = () => {
+    if (editTermModal) editTermModal.style.display = 'none';
+    if (editTermForm) editTermForm.reset();
+    currentEditingTerm = null;
+  };
+
+  if (closeAddTermModalBtn) closeAddTermModalBtn.addEventListener('click', closeAddModal);
+  if (cancelAddTermBtn) cancelAddTermBtn.addEventListener('click', closeAddModal);
+
+  if (closeEditTermModalBtn) closeEditTermModalBtn.addEventListener('click', closeEditModal);
+  if (cancelEditTermBtn) cancelEditTermBtn.addEventListener('click', closeEditModal);
+
+  // Close modals when clicking overlay background
+  window.addEventListener('click', (e) => {
+    if (e.target === addTermModal) closeAddModal();
+    if (e.target === editTermModal) closeEditModal();
+  });
+
+  // Toggle custom language code input
+  if (addPairLangSelect) {
+    addPairLangSelect.addEventListener('change', () => {
+      if (addPairLangSelect.value === 'custom') {
+        if (customCodeGroup) customCodeGroup.style.display = 'flex';
+        if (addPairCustomCode) addPairCustomCode.focus();
+      } else {
+        if (customCodeGroup) customCodeGroup.style.display = 'none';
+      }
+    });
+  }
+
+  // Add new language pair inside edit modal
+  if (addPairBtn) {
+    addPairBtn.addEventListener('click', () => {
+      let langCode = addPairLangSelect ? addPairLangSelect.value : 'es';
+      if (langCode === 'custom') {
+        langCode = (addPairCustomCode?.value || '').trim().toLowerCase();
+        if (!langCode || langCode.length < 2) {
+          alert('Please enter a valid 2-letter language code (e.g. "de", "it", "nl").');
+          addPairCustomCode?.focus();
+          return;
+        }
+      }
+
+      const transText = (addPairTextInput?.value || '').trim();
+      if (!transText) {
+        alert('Please enter a translation for this language pair.');
+        addPairTextInput?.focus();
+        return;
+      }
+
+      const container = document.getElementById('editTranslationsContainer');
+      if (!container) return;
+
+      // Check if this language already exists in container
+      const existingRow = container.querySelector(`.pair-editor-row[data-lang="${langCode}"]`);
+      if (existingRow) {
+        const inp = existingRow.querySelector('.pair-trans-input');
+        if (inp) {
+          inp.value = transText;
+          inp.focus();
+          inp.style.outline = '2px solid #38bdf8';
+          setTimeout(() => { inp.style.outline = 'none'; }, 1000);
+        }
+      } else {
+        const emptyNotice = container.querySelector('.empty-translations-hint');
+        if (emptyNotice) emptyNotice.remove();
+
+        const meta = GLOSSARY_LANG_MAP[langCode] || { name: langCode.toUpperCase(), flag: '🌐' };
+        const row = document.createElement('div');
+        row.className = 'pair-editor-row';
+        row.dataset.lang = langCode;
+        row.innerHTML = `
+          <div class="pair-lang-badge">
+            <span>${meta.flag}</span>
+            <span>${meta.name} (${langCode.toUpperCase()})</span>
+          </div>
+          <input type="text" class="pair-trans-input" value="${escapeHtml(transText)}" placeholder="Translation in ${meta.name}" required>
+          <button type="button" class="btn-remove-pair" title="Remove this translation">❌ Remove</button>
+        `;
+
+        row.querySelector('.btn-remove-pair').addEventListener('click', () => {
+          row.remove();
+          if (container.querySelectorAll('.pair-editor-row').length === 0) {
+            container.innerHTML = `<div class="empty-translations-hint" style="color: #64748b; font-size: 0.8rem; padding: 10px;">No language translations configured yet. Add one below.</div>`;
+          }
+        });
+
+        container.appendChild(row);
+      }
+
+      // Reset add pair input
+      if (addPairTextInput) addPairTextInput.value = '';
+    });
+  }
+
+  // Handle Edit Term form submission
+  if (editTermForm) {
+    editTermForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const termId = document.getElementById('editTermId')?.value;
+      const en = document.getElementById('editTermEn')?.value.trim();
+      const category = document.getElementById('editTermCategory')?.value;
+      const keep_original = document.getElementById('editTermKeepOriginal')?.checked;
+      const notes = document.getElementById('editTermNotes')?.value.trim() || '';
+
+      if (!termId || !en) return;
+
+      const container = document.getElementById('editTranslationsContainer');
+      const rows = container ? container.querySelectorAll('.pair-editor-row') : [];
+      const translations = {};
+      rows.forEach(r => {
+        const l = r.dataset.lang;
+        const v = r.querySelector('.pair-trans-input')?.value.trim();
+        if (l && v) {
+          translations[l] = v;
+        }
+      });
+
+      if (Object.keys(translations).length === 0) {
+        alert('Please keep or add at least one language translation pair.');
+        return;
+      }
+
+      const payload = {
+        en,
+        category,
+        keep_original,
+        translations,
+        notes
+      };
+
+      try {
+        const res = await fetch(`/api/glossary/terms/${encodeURIComponent(termId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const resData = await res.json();
+          const updatedTerm = resData.term || { ...payload, term_id: termId };
+
+          // Update local glossaryData
+          const idx = glossaryData.findIndex(t => t.term_id === termId);
+          if (idx !== -1) {
+            glossaryData[idx] = updatedTerm;
+          } else {
+            glossaryData.push(updatedTerm);
+          }
+
+          closeEditModal();
+          applyGlossaryFilters();
+          addTerminalLog(`Updated glossary term "${en}" across ${Object.keys(translations).length} languages.`, 'system');
+        } else {
+          // Fallback to POST if needed
+          const postRes = await fetch('/api/glossary/terms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, es: translations.es || en })
+          });
+          if (postRes.ok) {
+            const idx = glossaryData.findIndex(t => t.term_id === termId);
+            const updated = { ...payload, term_id: termId };
+            if (idx !== -1) glossaryData[idx] = updated;
+            else glossaryData.push(updated);
+            closeEditModal();
+            applyGlossaryFilters();
+            addTerminalLog(`Updated glossary term "${en}".`, 'system');
+          } else {
+            alert('Could not update term on server.');
+          }
+        }
+      } catch (err) {
+        console.error('Error updating term:', err);
+        alert('Network error updating term.');
+      }
+    });
+  }
+
+  // Delete term from inside edit modal
+  if (deleteTermFromModalBtn) {
+    deleteTermFromModalBtn.addEventListener('click', () => {
+      const termId = document.getElementById('editTermId')?.value;
+      const termEn = document.getElementById('editTermEn')?.value;
+      if (termId && termEn) {
+        closeEditModal();
+        deleteGlossaryTerm(termId, termEn);
+      }
+    });
+  }
 
   if (addTermForm) {
     addTermForm.addEventListener('submit', async (e) => {
@@ -1375,6 +1592,71 @@ async function deleteGlossaryTerm(termId, termEn) {
   }
 }
 
+function openEditTermModal(term) {
+  currentEditingTerm = term;
+  const editTermModal = document.getElementById('editTermModal');
+  if (!editTermModal) return;
+
+  const editTermId = document.getElementById('editTermId');
+  const editTermEn = document.getElementById('editTermEn');
+  const editTermCategory = document.getElementById('editTermCategory');
+  const editTermKeepOriginal = document.getElementById('editTermKeepOriginal');
+  const editTermNotes = document.getElementById('editTermNotes');
+  const subtitle = document.getElementById('editTermModalSubtitle');
+
+  if (editTermId) editTermId.value = term.term_id || '';
+  if (editTermEn) editTermEn.value = term.en || '';
+  if (editTermCategory) editTermCategory.value = term.category || 'Custom';
+  if (editTermKeepOriginal) editTermKeepOriginal.checked = Boolean(term.keep_original);
+  if (editTermNotes) editTermNotes.value = term.notes || '';
+
+  if (subtitle) {
+    subtitle.innerText = `Viewing "${term.en}" • ${term.category || 'Brand Term'} • Click into any translation to edit, remove, or add new pairs`;
+  }
+
+  // Populate translations container
+  const container = document.getElementById('editTranslationsContainer');
+  if (container) {
+    container.innerHTML = '';
+    const translations = term.translations || {};
+    const entries = Object.entries(translations);
+
+    if (entries.length === 0) {
+      container.innerHTML = `<div class="empty-translations-hint" style="color: #64748b; font-size: 0.8rem; padding: 10px;">No language translations configured yet. Add one below.</div>`;
+    } else {
+      entries.forEach(([lang, val]) => {
+        const meta = GLOSSARY_LANG_MAP[lang.toLowerCase()] || { name: lang.toUpperCase(), flag: '🌐' };
+        const row = document.createElement('div');
+        row.className = 'pair-editor-row';
+        row.dataset.lang = lang.toLowerCase();
+        row.innerHTML = `
+          <div class="pair-lang-badge">
+            <span>${meta.flag}</span>
+            <span>${meta.name} (${lang.toUpperCase()})</span>
+          </div>
+          <input type="text" class="pair-trans-input" value="${escapeHtml(val)}" placeholder="Translation in ${meta.name}" required>
+          <button type="button" class="btn-remove-pair" title="Remove this translation">❌ Remove</button>
+        `;
+
+        row.querySelector('.btn-remove-pair').addEventListener('click', () => {
+          row.remove();
+          if (container.querySelectorAll('.pair-editor-row').length === 0) {
+            container.innerHTML = `<div class="empty-translations-hint" style="color: #64748b; font-size: 0.8rem; padding: 10px;">No language translations configured yet. Add one below.</div>`;
+          }
+        });
+
+        container.appendChild(row);
+      });
+    }
+  }
+
+  // Reset add pair fields
+  const addPairTextInput = document.getElementById('addPairTextInput');
+  if (addPairTextInput) addPairTextInput.value = '';
+
+  editTermModal.style.display = 'flex';
+}
+
 function renderGlossary(terms, selectedLang = 'all') {
   glossaryGrid.innerHTML = '';
   
@@ -1400,6 +1682,7 @@ function renderGlossary(terms, selectedLang = 'all') {
   terms.forEach(t => {
     const card = document.createElement('div');
     card.className = 'glossary-card';
+    card.title = `Click to view or edit all language pairs for "${t.en}"`;
     
     const availableLangs = t.translations ? Object.keys(t.translations) : [];
 
@@ -1444,10 +1727,16 @@ function renderGlossary(terms, selectedLang = 'all') {
       ${transDisplayHtml}
       <div class="term-notes">${t.keep_original ? '🔒 Preserve Brand Name' : '🔄 Contextual Translation'} • ${t.notes || ''}</div>
       <div class="glossary-card-footer">
-        <span style="font-size: 0.68rem; color: #64748b;">ID: <code>${t.term_id}</code></span>
+        <div class="card-click-hint"><span>✏️ Click to view/edit language pairs</span></div>
         <button class="btn-delete-term" title="Delete term" data-term-id="${t.term_id}" data-term-en="${t.en}">🗑️ Remove</button>
       </div>
     `;
+
+    // Click on card opens edit modal with all language pairs
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-delete-term')) return;
+      openEditTermModal(t);
+    });
 
     const delBtn = card.querySelector('.btn-delete-term');
     if (delBtn) {

@@ -522,6 +522,113 @@
           </div>
         </div>
 
+        <!-- Edit Term & Multi-Language Pairs Detail Modal -->
+        <div id="editTermModal" class="glossary-modal" style="display: none;">
+          <div class="glossary-modal-content glossary-modal-lg">
+            <div class="modal-header">
+              <div>
+                <h3 id="editTermModalTitle">📝 Term Details & Language Pairs</h3>
+                <span id="editTermModalSubtitle" class="modal-subtitle">Click into any translation to edit or add new language pairs</span>
+              </div>
+              <button id="closeEditTermModalBtn" class="modal-close">&times;</button>
+            </div>
+            <form id="editTermForm" class="glossary-form">
+              <input type="hidden" id="editTermId">
+              
+              <div class="form-row">
+                <div class="form-group" style="flex: 2;">
+                  <label for="editTermEn">English Term / Source Name *</label>
+                  <input type="text" id="editTermEn" required>
+                </div>
+                <div class="form-group" style="flex: 1.2;">
+                  <label for="editTermCategory">Category</label>
+                  <select id="editTermCategory" class="custom-select">
+                    <option value="Attraction">Attraction / Ride</option>
+                    <option value="Service">Park Service / Ticketing</option>
+                    <option value="Personnel">Host / Staff Role</option>
+                    <option value="Concept">Park Concept / Routine</option>
+                    <option value="Food & Beverage">Dining / Food & Beverage</option>
+                    <option value="Merchandise">Merchandise / Wearable</option>
+                    <option value="Custom">Custom Brand Term</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group checkbox-group-inline" style="padding-top: 4px; margin-bottom: 4px;">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="editTermKeepOriginal">
+                    <span class="slider"></span>
+                  </label>
+                  <span class="toggle-label-text">🔒 Keep original brand name across languages (untranslated proper noun)</span>
+                </div>
+              </div>
+
+              <!-- Language Pairs List -->
+              <div class="form-section-divider">
+                <span>🌐 Configured Language Pairs</span>
+              </div>
+
+              <div id="editTranslationsContainer" class="edit-translations-container">
+                <!-- Dynamically populated rows with language flag, tag, and editable input -->
+              </div>
+
+              <!-- Add New Language Pair to this Term -->
+              <div class="form-section-divider" style="margin-top: 14px;">
+                <span>➕ Add Another Language Pair to this Term</span>
+              </div>
+
+              <div class="add-pair-box">
+                <div class="add-pair-row">
+                  <div class="form-group" style="flex: 1.2; margin-bottom: 0;">
+                    <label for="addPairLangSelect">Target Language</label>
+                    <select id="addPairLangSelect" class="custom-select">
+                      <option value="es">🇪🇸 Spanish (ES)</option>
+                      <option value="pt">🇧🇷 Portuguese (PT)</option>
+                      <option value="fr">🇫🇷 French (FR)</option>
+                      <option value="ja">🇯🇵 Japanese (JA)</option>
+                      <option value="zh">🇨🇳 Mandarin Chinese (ZH)</option>
+                      <option value="de">🇩🇪 German (DE)</option>
+                      <option value="it">🇮🇹 Italian (IT)</option>
+                      <option value="ko">🇰🇷 Korean (KO)</option>
+                      <option value="custom">🌐 Custom Language Code...</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="customCodeGroup" style="flex: 0.8; margin-bottom: 0; display: none;">
+                    <label for="addPairCustomCode">ISO Code (e.g. nl)</label>
+                    <input type="text" id="addPairCustomCode" placeholder="2-letter code" maxlength="5">
+                  </div>
+                  <div class="form-group" style="flex: 2; margin-bottom: 0;">
+                    <label for="addPairTextInput">Target Translation</label>
+                    <input type="text" id="addPairTextInput" placeholder="Enter translated equivalent...">
+                  </div>
+                  <div class="form-group add-pair-btn-wrap" style="flex: 0 0 auto; margin-bottom: 0;">
+                    <button type="button" id="addPairBtn" class="btn-secondary-action">
+                      <span>➕ Add Pair</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Notes / Guidelines -->
+              <div class="form-row" style="margin-top: 14px;">
+                <div class="form-group">
+                  <label for="editTermNotes">Usage Guidelines & Pronunciation Notes</label>
+                  <input type="text" id="editTermNotes" placeholder="e.g. Express queue service. Do not translate literally.">
+                </div>
+              </div>
+
+              <div class="form-actions" style="justify-content: space-between;">
+                <button type="button" id="deleteTermFromModalBtn" class="btn-danger-outline">🗑️ Delete Term</button>
+                <div style="display: flex; gap: 10px;">
+                  <button type="button" id="cancelEditTermBtn" class="btn-cancel">Cancel</button>
+                  <button type="submit" id="saveEditTermBtn" class="btn-submit">💾 Save Changes</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+
         <div class="glossary-grid" id="glossaryGrid">
           <!-- Populated by JavaScript -->
         </div>
@@ -534,6 +641,6 @@
     </footer>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
