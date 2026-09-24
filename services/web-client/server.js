@@ -7,7 +7,131 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TRANSLATION_PIPELINE_URL = process.env.TRANSLATION_PIPELINE_URL || 'http://localhost:8081';
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Directory to store saved conversations
+const CONVERSATIONS_DIR = path.resolve(__dirname, 'conversations_data');
+if (!fs.existsSync(CONVERSATIONS_DIR)) {
+  try {
+    fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+  } catch (e) {
+    console.warn('Could not create conversations directory:', e.message);
+  }
+}
+
+// Conversation Storage API endpoints
+app.get('/api/conversations', (req, res) => {
+  try {
+    if (!fs.existsSync(CONVERSATIONS_DIR)) {
+      return res.json([]);
+    }
+    const files = fs.readdirSync(CONVERSATIONS_DIR).filter(f => f.endsWith('.json'));
+    const conversations = [];
+    for (const f of files) {
+      try {
+        const filePath = path.join(CONVERSATIONS_DIR, f);
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        conversations.push({
+          id: data.id || f.replace('.json', ''),
+          title: data.title || 'Untitled Conversation',
+          sourceLang: data.sourceLang || 'en',
+          targetLang: data.targetLang || 'es',
+          mode: data.mode || 'live',
+          createdAt: data.createdAt || fs.statSync(filePath).mtime.toISOString(),
+          turnCount: data.turns ? data.turns.length : 0,
+          hasAudio: Boolean(data.audioBase64 || (data.turns && data.turns.some(t => t.audioBase64)))
+        });
+      } catch (err) {
+        console.error('Error reading conversation file:', f, err);
+      }
+    }
+    // Sort descending by creation date
+    conversations.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json(conversations);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list conversations', message: err.message });
+  }
+});
+
+app.get('/api/conversations/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read conversation', message: err.message });
+  }
+});
+
+app.post('/api/conversations', (req, res) => {
+  try {
+    const conversation = req.body;
+    if (!conversation || !conversation.turns) {
+      return res.status(400).json({ error: 'Invalid conversation payload: turns array required.' });
+    }
+    const id = conversation.id || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const record = {
+      id,
+      title: conversation.title || `Conversation (${new Date().toLocaleDateString()})`,
+      sourceLang: conversation.sourceLang || 'en',
+      targetLang: conversation.targetLang || 'es',
+      mode: conversation.mode || 'live', // 'live' | 'recorded-upload'
+      createdAt: conversation.createdAt || new Date().toISOString(),
+      turns: conversation.turns || [],
+      metadata: conversation.metadata || {}
+    };
+
+    if (!fs.existsSync(CONVERSATIONS_DIR)) {
+      fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+    }
+    const filePath = path.join(CONVERSATIONS_DIR, `${id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf8');
+
+    res.json({ success: true, conversation: record });
+  } catch (err) {
+    console.error('Error saving conversation:', err);
+    res.status(500).json({ error: 'Failed to save conversation', message: err.message });
+  }
+});
+
+app.delete('/api/conversations/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return res.json({ success: true, message: 'Conversation deleted.' });
+    }
+    res.status(404).json({ error: 'Conversation not found.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete conversation', message: err.message });
+  }
+});
+
+// Proxy route for audio translation (recorded upload)
+app.post('/api/translate-audio-proxy', async (req, res) => {
+  try {
+    const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const fetchRes = await fetch(`${pipelineHost}/api/translate-audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(60000)
+    });
+    const data = await fetchRes.json();
+    return res.status(fetchRes.status).json(data);
+  } catch (err) {
+    console.error('Error proxying audio translation:', err);
+    res.status(502).json({ error: 'Translation pipeline error', message: err.message });
+  }
+});
 
 // Config endpoint exposing proxy URLs
 app.get('/config.json', (req, res) => {

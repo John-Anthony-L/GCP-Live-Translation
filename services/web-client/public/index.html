@@ -37,17 +37,27 @@
       <button class="tab-btn active" data-mode="translation-pipeline">
         <span class="tab-icon">🎙️</span>
         <span class="tab-title">2-Way Live Translation</span>
-        <span class="tab-subtitle">Chirp 3 (GA) ➔ DLP ➔ MT v3 ➔ Chirp 3 HD TTS</span>
+        <span class="tab-subtitle">Chirp 3 ➔ DLP ➔ MT v3 ➔ TTS</span>
+      </button>
+      <button class="tab-btn" data-mode="recorded-upload">
+        <span class="tab-icon">📁</span>
+        <span class="tab-title">Upload Audio</span>
+        <span class="tab-subtitle">Transcribe & Translate File</span>
+      </button>
+      <button class="tab-btn" data-mode="past-conversations">
+        <span class="tab-icon">📚</span>
+        <span class="tab-title">Past Conversations</span>
+        <span class="tab-subtitle">Saved Transcripts & Audio</span>
       </button>
       <button class="tab-btn" data-mode="dlp">
         <span class="tab-icon">🛡️</span>
-        <span class="tab-title">Data Loss Protection (DLP)</span>
-        <span class="tab-subtitle">PCI-DSS, Guest PII & Brand Security Rules</span>
+        <span class="tab-title">Data Loss Protection</span>
+        <span class="tab-subtitle">PCI & Guest PII Rules</span>
       </button>
       <button class="tab-btn" data-mode="glossary">
         <span class="tab-icon">📖</span>
-        <span class="tab-title">Brand Glossary & Languages</span>
-        <span class="tab-subtitle">Enforced Multi-Language Terminology</span>
+        <span class="tab-title">Brand Glossary</span>
+        <span class="tab-subtitle">Multi-Language Catalog</span>
       </button>
     </nav>
 
@@ -161,6 +171,15 @@
             <span>2-WAY INTERPRETER TRANSCRIPT</span>
             <div class="dialogue-header-actions">
               <span class="dlp-shield-indicator" id="dialogueDlpIndicator">🛡️ DLP Protected</span>
+              <button id="downloadLiveTranscriptBtn" class="action-pill-btn" title="Download text/markdown transcript of this conversation">
+                <span>📄 Download Transcript</span>
+              </button>
+              <button id="downloadLiveAudioBtn" class="action-pill-btn" title="Download audio recording of synthesized translations">
+                <span>🔊 Download Audio</span>
+              </button>
+              <button id="saveLiveConversationBtn" class="action-pill-btn save-pill" title="Save conversation to Past Conversations tab">
+                <span>💾 Save</span>
+              </button>
               <button id="clearChatBtn" class="clear-btn">Clear</button>
             </div>
           </div>
@@ -631,6 +650,201 @@
 
         <div class="glossary-grid" id="glossaryGrid">
           <!-- Populated by JavaScript -->
+        </div>
+      </section>
+
+      <!-- Section 4: Recorded Audio Upload & Translation -->
+      <section id="recordedUploadSection" class="view-section">
+        <div class="card-hero-panel">
+          <div class="panel-header">
+            <div>
+              <h2>📁 Upload Recorded Conversation</h2>
+              <p>Upload a recorded audio conversation (WAV, MP3, M4A, OGG, WebM) to transcribe with Chirp 3, redact sensitive PII with Cloud DLP, translate with Brand Glossary enforcement, and synthesize speech.</p>
+            </div>
+            <div class="upload-badge">
+              <span>Cloud Chirp 3 + DLP + MT v3</span>
+            </div>
+          </div>
+
+          <!-- Configuration Controls for Upload -->
+          <div class="controls-card" style="margin-top: 14px;">
+            <div class="control-group">
+              <label for="uploadLangPair">Conversation Language Direction</label>
+              <select id="uploadLangPair" class="custom-select">
+                <option value="en-es" selected>🇺🇸 English ➔ 🇲🇽 Spanish (LATAM)</option>
+                <option value="es-en">🇲🇽 Spanish ➔ 🇺🇸 English</option>
+                <option value="en-pt">🇺🇸 English ➔ 🇧🇷 Portuguese</option>
+                <option value="pt-en">🇧🇷 Portuguese ➔ 🇺🇸 English</option>
+                <option value="en-fr">🇺🇸 English ➔ 🇫🇷 French</option>
+                <option value="fr-en">🇫🇷 French ➔ 🇺🇸 English</option>
+                <option value="en-ja">🇺🇸 English ➔ 🇯🇵 Japanese</option>
+                <option value="ja-en">🇯🇵 Japanese ➔ 🇺🇸 English</option>
+                <option value="en-zh">🇺🇸 English ➔ 🇨🇳 Mandarin</option>
+                <option value="zh-en">🇨🇳 Mandarin ➔ 🇺🇸 English</option>
+              </select>
+            </div>
+
+            <div class="control-group">
+              <label for="uploadSttModel">Speech-to-Text Model</label>
+              <select id="uploadSttModel" class="custom-select">
+                <option value="chirp_3" selected>🎙️ Chirp 3 (Speech v2 GA)</option>
+                <option value="latest_short">⚡ Cloud Speech (latest_short)</option>
+              </select>
+            </div>
+
+            <div class="control-group toggle-group" style="padding-top: 12px;">
+              <label class="toggle-label">
+                <span>Enforce Brand Glossary</span>
+                <input type="checkbox" id="uploadUseGlossary" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="control-group toggle-group" style="padding-top: 12px;">
+              <label class="toggle-label">
+                <span>Cloud DLP Scrubbing</span>
+                <input type="checkbox" id="uploadUseDlp" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- File Upload Dropzone -->
+          <div class="upload-dropzone" id="uploadDropzone">
+            <input type="file" id="audioFileInput" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.aac" style="display: none;">
+            <div class="dropzone-content">
+              <span class="dropzone-icon">🎙️</span>
+              <h3>Drag & Drop Audio File Here</h3>
+              <p>Supports WAV, MP3, M4A, OGG, WebM (up to 50MB)</p>
+              <button type="button" id="browseAudioBtn" class="btn-primary-action" style="margin-top: 8px;">
+                <span>Browse File</span>
+              </button>
+              <div id="selectedFileInfo" class="selected-file-info" style="display: none;">
+                <span id="selectedFileName">file.wav</span>
+                <span id="selectedFileSize">0 KB</span>
+                <button type="button" id="removeSelectedFileBtn" class="btn-remove-file">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Process Button -->
+          <div class="upload-action-row">
+            <button type="button" id="processUploadBtn" class="btn-submit btn-large" disabled>
+              <span>⚡ Transcribe, Redact & Translate Audio</span>
+            </button>
+          </div>
+
+          <!-- Upload Processing Status & Progress -->
+          <div id="uploadStatusBox" class="upload-status-box" style="display: none;">
+            <div class="spinner-sm"></div>
+            <span id="uploadStatusText">Transcribing recorded audio with Chirp 3...</span>
+          </div>
+
+          <!-- Upload Results Card -->
+          <div id="uploadResultsCard" class="upload-results-card" style="display: none;">
+            <div class="results-header">
+              <h3>🎯 Translation Results</h3>
+              <div class="results-actions">
+                <button id="downloadUploadTranscriptBtn" class="action-pill-btn">
+                  <span>📄 Download Transcript</span>
+                </button>
+                <button id="downloadUploadAudioBtn" class="action-pill-btn">
+                  <span>🔊 Download Translated Audio</span>
+                </button>
+                <button id="saveUploadConvBtn" class="action-pill-btn save-pill">
+                  <span>💾 Save to Past Conversations</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Side-by-side or stacked Original vs Translated -->
+            <div class="results-grid">
+              <div class="result-block original-block">
+                <div class="block-title">
+                  <span class="badge-source">Original Speech (STT)</span>
+                  <span id="uploadSttLatency" class="block-meta">-- ms</span>
+                </div>
+                <div class="block-content" id="uploadOriginalText">--</div>
+                <div class="block-sub-meta" id="uploadDlpMeta">DLP Status: Clean</div>
+              </div>
+
+              <div class="result-block translated-block">
+                <div class="block-title">
+                  <span class="badge-target">Translated Output</span>
+                  <span id="uploadMtLatency" class="block-meta">-- ms</span>
+                </div>
+                <div class="block-content" id="uploadTranslatedText">--</div>
+                <div class="audio-player-row">
+                  <audio id="uploadAudioPlayer" controls style="width: 100%; margin-top: 10px;"></audio>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Past Conversations History & Transcripts -->
+      <section id="pastConversationsSection" class="view-section">
+        <div class="card-hero-panel">
+          <div class="panel-header">
+            <div>
+              <h2>📚 Past Conversations & Saved Transcripts</h2>
+              <p>Browse previously translated live dialogues and recorded audio uploads. View original and translated transcripts, playback speech audio, or export files anytime.</p>
+            </div>
+            <div class="history-toolbar-actions">
+              <button id="refreshConversationsBtn" class="btn-secondary-action">
+                <span>🔄 Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="conversations-filter-bar">
+            <input type="text" id="conversationsSearchInput" placeholder="Search conversations by title, original text, or translated speech...">
+            <div class="filter-pills">
+              <button class="filter-pill active" data-filter="all">All</button>
+              <button class="filter-pill" data-filter="live">Live Stream</button>
+              <button class="filter-pill" data-filter="recorded-upload">Recorded Upload</button>
+            </div>
+          </div>
+
+          <!-- Conversations List / Grid -->
+          <div id="conversationsContainer" class="conversations-grid">
+            <div class="empty-conversations-state">
+              <span class="empty-icon">📭</span>
+              <p>No saved conversations yet.</p>
+              <span class="empty-sub">Translate a live dialogue or upload a recorded conversation and click <strong>"Save"</strong> to store it here.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Conversation Details Modal -->
+        <div id="conversationModal" class="modal-overlay" style="display: none;">
+          <div class="modal-dialog conversation-modal-dialog">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 id="modalConvTitle">Conversation Details</h3>
+                <span id="modalConvDate" class="modal-date">Date</span>
+              </div>
+              <button type="button" id="closeConversationModalBtn" class="modal-close-btn">✕</button>
+            </div>
+            <div class="modal-body conversation-modal-body">
+              <div class="modal-export-bar">
+                <button id="modalDownloadTranscriptBtn" class="action-pill-btn">
+                  <span>📄 Download Transcript</span>
+                </button>
+                <button id="modalDownloadAudioBtn" class="action-pill-btn">
+                  <span>🔊 Download Audio</span>
+                </button>
+                <button id="modalDeleteConvBtn" class="btn-danger-outline" style="margin-left: auto;">
+                  <span>🗑️ Delete Conversation</span>
+                </button>
+              </div>
+
+              <div class="modal-turns-container" id="modalTurnsContainer">
+                <!-- Populated dynamically with turn bubbles -->
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>

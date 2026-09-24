@@ -190,6 +190,20 @@ The Web Client includes a real-time **Telemetry Terminal** that monitors every h
 
 ## API & WebSocket Endpoints Reference
 
+### Service 1: Web Client & Management Server (Port 3000)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/config.json` | Returns dynamic WebSocket URLs and backend proxy configuration |
+| `GET` | `/api/conversations` | Lists all saved conversations with turn counts, timestamps, and language pairs |
+| `GET` | `/api/conversations/:id` | Returns complete dialogue turns, original and translated text, and audio chunks |
+| `POST` | `/api/conversations` | Saves a live or recorded conversation transcript and synthesized audio |
+| `DELETE` | `/api/conversations/:id` | Deletes a conversation from persistent storage |
+| `POST` | `/api/translate-audio-proxy` | Proxies recorded audio file translation payloads to the pipeline service |
+| `GET` | `/api/glossary` | Retrieves current enterprise brand glossary terms and translations |
+| `POST` | `/api/glossary/terms` | Adds or updates multi-language glossary definitions |
+| `DELETE` | `/api/glossary/terms/:id` | Removes a term from the brand glossary |
+
 ### Service 2: Translation Pipeline (Port 8081)
 
 | Method | Endpoint | Description |

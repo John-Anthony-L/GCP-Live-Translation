@@ -1,5 +1,5 @@
 // Enterprise 2-Way Live Translation Client (Powered by Chirp 3 GA + Cloud DLP + MT v3 + Chirp 3 HD TTS)
-let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'dlp' | 'glossary'
+let currentMode = 'translation-pipeline'; // 'translation-pipeline' | 'recorded-upload' | 'past-conversations' | 'dlp' | 'glossary'
 let currentSpeakerRole = 'cast-member'; // 'cast-member' | 'guest' | 'ambient'
 let isRecording = false;
 let isContinuous = false;
@@ -16,6 +16,13 @@ let vadSpeaking = false;
 let vadSilenceStart = 0;
 const VAD_ENERGY_THRESHOLD = 0.0035; // Sensitive voice activity threshold
 const VAD_SILENCE_TIMEOUT_MS = 800; // 800ms silence automatically dispatches speech turn
+
+// Conversation History & Audio Persistence State
+let liveConversationTurns = [];
+let liveSynthesizedPcmChunks = []; // stores base64 PCM chunks of TTS
+let currentUploadResult = null;
+let savedConversationsList = [];
+let selectedUploadFile = null;
 
 // DLP State
 let dlpMasterEnabled = true;
@@ -112,6 +119,8 @@ function addTerminalLog(msg, type = '') {
 async function init() {
   setupTabs();
   setupControls();
+  setupRecordedUpload();
+  setupPastConversations();
   await setupDLP();
   await setupGlossary();
   setupQuickScenarios();
@@ -145,16 +154,23 @@ function switchMode(mode) {
     }
   });
 
-  document.getElementById('translationSection').classList.remove('active');
-  document.getElementById('dlpSection').classList.remove('active');
-  document.getElementById('glossarySection').classList.remove('active');
+  const sections = ['translationSection', 'recordedUploadSection', 'pastConversationsSection', 'dlpSection', 'glossarySection'];
+  sections.forEach(secId => {
+    const el = document.getElementById(secId);
+    if (el) el.classList.remove('active');
+  });
 
   if (mode === 'glossary') {
-    document.getElementById('glossarySection').classList.add('active');
+    document.getElementById('glossarySection')?.classList.add('active');
   } else if (mode === 'dlp') {
-    document.getElementById('dlpSection').classList.add('active');
+    document.getElementById('dlpSection')?.classList.add('active');
+  } else if (mode === 'recorded-upload') {
+    document.getElementById('recordedUploadSection')?.classList.add('active');
+  } else if (mode === 'past-conversations') {
+    document.getElementById('pastConversationsSection')?.classList.add('active');
+    loadPastConversations();
   } else {
-    document.getElementById('translationSection').classList.add('active');
+    document.getElementById('translationSection')?.classList.add('active');
     reconnectWebSocket();
   }
 }
@@ -196,7 +212,31 @@ function setupControls() {
       </div>
     `;
     currentMessageBubble = null;
+    liveConversationTurns = [];
+    liveSynthesizedPcmChunks = [];
   });
+
+  // Live Transcript Export & Save Buttons
+  const downloadLiveTranscriptBtn = document.getElementById('downloadLiveTranscriptBtn');
+  if (downloadLiveTranscriptBtn) {
+    downloadLiveTranscriptBtn.addEventListener('click', () => {
+      downloadTranscriptFile(liveConversationTurns, 'live_conversation_transcript');
+    });
+  }
+
+  const downloadLiveAudioBtn = document.getElementById('downloadLiveAudioBtn');
+  if (downloadLiveAudioBtn) {
+    downloadLiveAudioBtn.addEventListener('click', () => {
+      downloadSynthesizedAudio(liveSynthesizedPcmChunks, 'live_translation_speech.wav');
+    });
+  }
+
+  const saveLiveConversationBtn = document.getElementById('saveLiveConversationBtn');
+  if (saveLiveConversationBtn) {
+    saveLiveConversationBtn.addEventListener('click', async () => {
+      await saveCurrentLiveConversation();
+    });
+  }
 
   // Cast Member Push to Talk
   setupMicButton(castMemberMicBtn, 'cast-member');
@@ -767,6 +807,12 @@ async function connectWebSocket() {
         }
         addTerminalLog(`TTS Audio ready -> Playing through FIFO Audio Queue (Total E2E: ${Math.round(data.total_latency_ms || 0)}ms)`, 'tts');
 
+        // Store PCM chunk for audio download & persistence
+        liveSynthesizedPcmChunks.push({
+          pcmBase64: data.pcm,
+          sampleRate: data.sampleRate || 24000
+        });
+
         setLiveStatus('Playing Translation Speech...', true);
         playPcmChunk(data.pcm, data.sampleRate || 24000);
         if (isContinuous) {
@@ -1138,10 +1184,11 @@ function addMessageBubble(role, originalText) {
     : (role === 'guest' 
         ? '🌐 Guest (Spanish)' 
         : '🎙️ Live 2-Way Ambient');
+  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   bubble.innerHTML = `
     <div class="message-meta">
       <span>${roleLabel}</span>
-      <span class="bubble-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+      <span class="bubble-time">${timeStr}</span>
     </div>
     <div class="message-text">${originalText}</div>
     <div class="message-translated">🔄 Translating...</div>
@@ -1150,6 +1197,17 @@ function addMessageBubble(role, originalText) {
   chatFeed.appendChild(bubble);
   chatFeed.scrollTop = chatFeed.scrollHeight;
   currentMessageBubble = bubble;
+
+  // Add turn entry into conversation tracking
+  bubble._turnData = {
+    role,
+    roleLabel,
+    originalText,
+    translatedText: '',
+    time: timeStr,
+    timestamp: Date.now()
+  };
+  liveConversationTurns.push(bubble._turnData);
 }
 
 function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-member', dlpApplied = false) {
@@ -1167,6 +1225,15 @@ function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-mem
     const dlpBadge = dlpApplied ? ` <span class="badge-mini badge-dlp">🛡️ DLP Redacted</span>` : '';
     textEl.innerHTML = `"${transcript}"${latencyBadge}${dlpBadge}`;
   }
+
+  if (currentMessageBubble._turnData) {
+    currentMessageBubble._turnData.originalText = transcript;
+    currentMessageBubble._turnData.role = role;
+    currentMessageBubble._turnData.sttMs = sttMs;
+    currentMessageBubble._turnData.sttModel = sttModel;
+    currentMessageBubble._turnData.dlpApplied = dlpApplied;
+  }
+
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
@@ -1178,6 +1245,13 @@ function updateMessageTranslation(translatedText, glossaryApplied, transMs) {
     const latencyBadge = transMs ? ` <span class="badge-mini">⏱️ ${Math.round(transMs)}ms</span>` : '';
     transEl.innerHTML = `✨ ${translatedText}${glossaryBadge}${latencyBadge}`;
   }
+
+  if (currentMessageBubble._turnData) {
+    currentMessageBubble._turnData.translatedText = translatedText;
+    currentMessageBubble._turnData.glossaryApplied = glossaryApplied;
+    currentMessageBubble._turnData.transMs = transMs;
+  }
+
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
@@ -1748,6 +1822,671 @@ function renderGlossary(terms, selectedLang = 'all') {
 
     glossaryGrid.appendChild(card);
   });
+}
+
+// ----------------------------------------------------
+// Recorded Audio Upload & Translation Implementation
+// ----------------------------------------------------
+function setupRecordedUpload() {
+  const uploadDropzone = document.getElementById('uploadDropzone');
+  const audioFileInput = document.getElementById('audioFileInput');
+  const browseAudioBtn = document.getElementById('browseAudioBtn');
+  const selectedFileInfo = document.getElementById('selectedFileInfo');
+  const selectedFileName = document.getElementById('selectedFileName');
+  const selectedFileSize = document.getElementById('selectedFileSize');
+  const removeSelectedFileBtn = document.getElementById('removeSelectedFileBtn');
+  const processUploadBtn = document.getElementById('processUploadBtn');
+  const uploadStatusBox = document.getElementById('uploadStatusBox');
+  const uploadStatusText = document.getElementById('uploadStatusText');
+  const uploadResultsCard = document.getElementById('uploadResultsCard');
+  const downloadUploadTranscriptBtn = document.getElementById('downloadUploadTranscriptBtn');
+  const downloadUploadAudioBtn = document.getElementById('downloadUploadAudioBtn');
+  const saveUploadConvBtn = document.getElementById('saveUploadConvBtn');
+
+  if (!uploadDropzone || !audioFileInput) return;
+
+  browseAudioBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    audioFileInput.click();
+  });
+
+  uploadDropzone.addEventListener('click', () => {
+    audioFileInput.click();
+  });
+
+  uploadDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadDropzone.classList.add('dragover');
+  });
+
+  uploadDropzone.addEventListener('dragleave', () => {
+    uploadDropzone.classList.remove('dragover');
+  });
+
+  uploadDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadDropzone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  });
+
+  audioFileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFileSelected(e.target.files[0]);
+    }
+  });
+
+  if (removeSelectedFileBtn) {
+    removeSelectedFileBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedUploadFile = null;
+      audioFileInput.value = '';
+      selectedFileInfo.style.display = 'none';
+      processUploadBtn.disabled = true;
+      if (uploadResultsCard) uploadResultsCard.style.display = 'none';
+    });
+  }
+
+  function handleFileSelected(file) {
+    selectedUploadFile = file;
+    selectedFileName.innerText = file.name;
+    const kb = Math.round(file.size / 1024);
+    selectedFileSize.innerText = kb > 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
+    selectedFileInfo.style.display = 'inline-flex';
+    processUploadBtn.disabled = false;
+  }
+
+  processUploadBtn.addEventListener('click', async () => {
+    if (!selectedUploadFile) return;
+
+    uploadStatusBox.style.display = 'flex';
+    uploadStatusText.innerText = 'Decoding audio file and converting to 16kHz PCM...';
+    processUploadBtn.disabled = true;
+    if (uploadResultsCard) uploadResultsCard.style.display = 'none';
+
+    try {
+      // 1. Decode audio in browser to 16kHz Mono Int16 PCM
+      const arrayBuf = await selectedUploadFile.arrayBuffer();
+      const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const audioBuf = await tempCtx.decodeAudioData(arrayBuf);
+      
+      uploadStatusText.innerText = 'Resampling to 16kHz mono PCM for Chirp 3 STT...';
+      const pcm16 = resampleAudioBufferTo16kPcm(audioBuf);
+      const base64Audio = arrayBufferToBase64(pcm16.buffer);
+
+      uploadStatusText.innerText = 'Sending to Speech-to-Text (Chirp 3) & Translation Pipeline...';
+
+      const langPair = document.getElementById('uploadLangPair').value;
+      const [sourceLang, targetLang] = langPair.split('-');
+      const sttModel = document.getElementById('uploadSttModel').value;
+      const useGlossary = document.getElementById('uploadUseGlossary').checked;
+      const useDlp = document.getElementById('uploadUseDlp').checked;
+
+      const payload = {
+        audio_base64: base64Audio,
+        source_lang: sourceLang,
+        target_lang: targetLang,
+        stt_model: sttModel,
+        use_glossary: useGlossary,
+        use_dlp: useDlp,
+        dlp_info_types: Array.from(activeDlpInfoTypes)
+      };
+
+      const res = await fetch('/api/translate-audio-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        throw new Error(`Pipeline returned HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      currentUploadResult = {
+        file_name: selectedUploadFile.name,
+        source_lang: sourceLang,
+        target_lang: targetLang,
+        original_transcript: (data.stt && data.stt.transcript) || '',
+        sanitized_transcript: (data.dlp && data.dlp.sanitized_text) || (data.stt && data.stt.transcript) || '',
+        translated_text: (data.translation && data.translation.translated_text) || '',
+        audio_base64: (data.tts && data.tts.audio_base64) || '',
+        stt_ms: data.stt ? data.stt.latency_ms : 0,
+        dlp_ms: data.dlp ? data.dlp.latency_ms : 0,
+        translation_ms: data.translation ? data.translation.latency_ms : 0,
+        tts_ms: data.tts ? data.tts.latency_ms : 0,
+        total_latency_ms: data.total_latency_ms || 0,
+        dlp_findings: (data.dlp && data.dlp.findings) || []
+      };
+
+      // Display results
+      renderUploadResults(currentUploadResult);
+      uploadStatusBox.style.display = 'none';
+      processUploadBtn.disabled = false;
+      addTerminalLog(`[Recorded Upload] Processed "${selectedUploadFile.name}": "${currentUploadResult.original_transcript}" ➔ "${currentUploadResult.translated_text}"`, 'mt');
+    } catch (err) {
+      console.error('Error processing audio upload:', err);
+      uploadStatusBox.style.display = 'none';
+      processUploadBtn.disabled = false;
+      alert(`Error translating audio file: ${err.message}`);
+    }
+  });
+
+  if (downloadUploadTranscriptBtn) {
+    downloadUploadTranscriptBtn.addEventListener('click', () => {
+      if (!currentUploadResult) return;
+      const turns = [{
+        role: 'speaker',
+        roleLabel: `Original Audio (${currentUploadResult.source_lang.toUpperCase()})`,
+        originalText: currentUploadResult.original_transcript,
+        translatedText: currentUploadResult.translated_text,
+        time: new Date().toLocaleTimeString(),
+        timestamp: Date.now()
+      }];
+      downloadTranscriptFile(turns, `upload_${currentUploadResult.file_name}_transcript`);
+    });
+  }
+
+  if (downloadUploadAudioBtn) {
+    downloadUploadAudioBtn.addEventListener('click', () => {
+      if (!currentUploadResult || !currentUploadResult.audio_base64) {
+        alert('No synthesized audio available for this upload.');
+        return;
+      }
+      downloadSynthesizedAudio([{ pcmBase64: currentUploadResult.audio_base64, sampleRate: 24000 }], `upload_${currentUploadResult.file_name}_translated.wav`);
+    });
+  }
+
+  if (saveUploadConvBtn) {
+    saveUploadConvBtn.addEventListener('click', async () => {
+      if (!currentUploadResult) return;
+      await saveCurrentUploadConversation();
+    });
+  }
+}
+
+function renderUploadResults(result) {
+  const card = document.getElementById('uploadResultsCard');
+  if (!card) return;
+  card.style.display = 'flex';
+
+  const origEl = document.getElementById('uploadOriginalText');
+  const transEl = document.getElementById('uploadTranslatedText');
+  const sttLat = document.getElementById('uploadSttLatency');
+  const mtLat = document.getElementById('uploadMtLatency');
+  const dlpMeta = document.getElementById('uploadDlpMeta');
+  const player = document.getElementById('uploadAudioPlayer');
+
+  if (origEl) origEl.innerText = result.original_transcript || '(No speech detected)';
+  if (transEl) transEl.innerText = result.translated_text || '(Translation pending)';
+  if (sttLat) sttLat.innerText = `${Math.round(result.stt_ms)} ms`;
+  if (mtLat) mtLat.innerText = `${Math.round(result.translation_ms + result.tts_ms)} ms`;
+
+  if (dlpMeta) {
+    if (result.dlp_findings && result.dlp_findings.length > 0) {
+      dlpMeta.innerHTML = `<span style="color:#ff8a80">⚠️ Cloud DLP Redacted:</span> ${result.dlp_findings.map(f => f.displayName || f.infoType).join(', ')}`;
+    } else {
+      dlpMeta.innerText = '🛡️ Cloud DLP: Clean (No PII detected)';
+    }
+  }
+
+  if (player && result.audio_base64) {
+    const wavBlob = pcm16Base64ToWavBlob(result.audio_base64, 24000);
+    player.src = URL.createObjectURL(wavBlob);
+    player.load();
+  }
+}
+
+// Convert AudioBuffer to 16kHz Mono Int16Array PCM
+function resampleAudioBufferTo16kPcm(audioBuffer) {
+  const targetSampleRate = 16000;
+  const numChannels = audioBuffer.numberOfChannels;
+  const length = Math.round(audioBuffer.duration * targetSampleRate);
+  
+  // Merge channels to mono
+  const monoChannel = new Float32Array(audioBuffer.length);
+  for (let c = 0; c < numChannels; c++) {
+    const channelData = audioBuffer.getChannelData(c);
+    for (let i = 0; i < audioBuffer.length; i++) {
+      monoChannel[i] += channelData[i] / numChannels;
+    }
+  }
+
+  // Linear interpolation resampling to 16kHz
+  const ratio = audioBuffer.sampleRate / targetSampleRate;
+  const result = new Int16Array(length);
+  for (let i = 0; i < length; i++) {
+    const origIndex = i * ratio;
+    const indexFloor = Math.floor(origIndex);
+    const frac = origIndex - indexFloor;
+    const sample1 = monoChannel[indexFloor] || 0;
+    const sample2 = monoChannel[Math.min(indexFloor + 1, monoChannel.length - 1)] || 0;
+    const interp = sample1 + (sample2 - sample1) * frac;
+    const clamped = Math.max(-1, Math.min(1, interp));
+    result[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
+  }
+  return result;
+}
+
+// ----------------------------------------------------
+// Past Conversations & Saved Transcripts
+// ----------------------------------------------------
+function setupPastConversations() {
+  const refreshBtn = document.getElementById('refreshConversationsBtn');
+  const searchInput = document.getElementById('conversationsSearchInput');
+  const filterPills = document.querySelectorAll('.filter-pill');
+  const closeBtn = document.getElementById('closeConversationModalBtn');
+  const modal = document.getElementById('conversationModal');
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', loadPastConversations);
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      filterAndRenderConversations();
+    });
+  }
+
+  filterPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      filterPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      filterAndRenderConversations();
+    });
+  });
+
+  if (closeBtn && modal) {
+    closeBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.style.display = 'none';
+    });
+  }
+}
+
+async function loadPastConversations() {
+  try {
+    const res = await fetch('/api/conversations');
+    if (res.ok) {
+      savedConversationsList = await res.json();
+      filterAndRenderConversations();
+    }
+  } catch (err) {
+    console.warn('Failed to load past conversations:', err.message);
+  }
+}
+
+function filterAndRenderConversations() {
+  const container = document.getElementById('conversationsContainer');
+  const searchInput = document.getElementById('conversationsSearchInput');
+  const activePill = document.querySelector('.filter-pill.active');
+  if (!container) return;
+
+  const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+  const filterMode = activePill ? activePill.getAttribute('data-filter') : 'all';
+
+  let list = savedConversationsList;
+  if (filterMode !== 'all') {
+    list = list.filter(c => c.mode === filterMode);
+  }
+
+  if (query) {
+    list = list.filter(c => {
+      return (c.title && c.title.toLowerCase().includes(query)) ||
+             (c.sourceLang && c.sourceLang.toLowerCase().includes(query)) ||
+             (c.targetLang && c.targetLang.toLowerCase().includes(query));
+    });
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div class="empty-conversations-state">
+        <span class="empty-icon">📭</span>
+        <p>No conversations found.</p>
+        <span class="empty-sub">Translate in Live mode or upload an audio file and click <strong>"Save"</strong>.</span>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = '';
+  list.forEach(conv => {
+    const card = document.createElement('div');
+    card.className = 'conversation-card';
+    const dateFormatted = new Date(conv.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    const isLive = conv.mode === 'live';
+    const langFlag = conv.targetLang === 'es' ? '🇲🇽' : '🌐';
+
+    card.innerHTML = `
+      <div class="conv-card-left">
+        <div class="conv-card-title-row">
+          <span class="conv-title">${escapeHtml(conv.title)}</span>
+          <span class="conv-mode-badge ${conv.mode}">${isLive ? 'Live Stream' : 'Recorded Upload'}</span>
+        </div>
+        <div class="conv-meta">
+          <span>📅 ${dateFormatted}</span>
+          <span>💬 ${conv.turnCount || 1} Turn(s)</span>
+          <span>${conv.sourceLang.toUpperCase()} ➔ ${langFlag} ${conv.targetLang.toUpperCase()}</span>
+          ${conv.hasAudio ? '<span>🔊 Audio Saved</span>' : ''}
+        </div>
+      </div>
+      <div class="conv-card-right">
+        <button class="action-pill-btn btn-view-conv" title="Open Conversation">
+          <span>View Transcript ➔</span>
+        </button>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      openConversationDetails(conv.id);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+async function openConversationDetails(convId) {
+  const modal = document.getElementById('conversationModal');
+  const titleEl = document.getElementById('modalConvTitle');
+  const dateEl = document.getElementById('modalConvDate');
+  const container = document.getElementById('modalTurnsContainer');
+  const downloadTransBtn = document.getElementById('modalDownloadTranscriptBtn');
+  const downloadAudioBtn = document.getElementById('modalDownloadAudioBtn');
+  const deleteBtn = document.getElementById('modalDeleteConvBtn');
+
+  if (!modal) return;
+  modal.style.display = 'flex';
+  container.innerHTML = '<div style="padding:20px; text-align:center; color:#94a3b8;">Loading conversation...</div>';
+
+  try {
+    const res = await fetch(`/api/conversations/${convId}`);
+    if (!res.ok) throw new Error('Not found');
+    const conv = await res.json();
+
+    titleEl.innerText = conv.title || 'Conversation Details';
+    dateEl.innerText = `Recorded: ${new Date(conv.createdAt).toLocaleString()}`;
+
+    // Render turns
+    container.innerHTML = '';
+    const turns = conv.turns || [];
+    if (turns.length === 0) {
+      container.innerHTML = '<div style="color:#94a3b8; padding: 10px;">No dialogue turns saved.</div>';
+    } else {
+      turns.forEach((turn, idx) => {
+        const turnCard = document.createElement('div');
+        turnCard.className = 'modal-turn-card';
+        turnCard.innerHTML = `
+          <div class="modal-turn-header">
+            <span><strong>Turn ${idx + 1}</strong> • ${escapeHtml(turn.roleLabel || turn.role || 'Speaker')}</span>
+            <span>${turn.time || ''}</span>
+          </div>
+          <div class="modal-turn-original">
+            <strong>Original:</strong> "${escapeHtml(turn.originalText || '')}"
+          </div>
+          <div class="modal-turn-translated">
+            <strong>Translated:</strong> "${escapeHtml(turn.translatedText || '')}"
+          </div>
+        `;
+        container.appendChild(turnCard);
+      });
+    }
+
+    // Modal action buttons
+    downloadTransBtn.onclick = () => {
+      downloadTranscriptFile(turns, `${conv.title.replace(/[^a-z0-9_-]/gi, '_')}_transcript`);
+    };
+
+    downloadAudioBtn.onclick = () => {
+      // Gather audio chunks
+      const pcmList = [];
+      if (conv.metadata && conv.metadata.synthesizedPcmChunks) {
+        pcmList.push(...conv.metadata.synthesizedPcmChunks);
+      }
+      turns.forEach(t => {
+        if (t.audioBase64) pcmList.push({ pcmBase64: t.audioBase64, sampleRate: 24000 });
+      });
+
+      if (pcmList.length === 0) {
+        alert('No synthesized audio chunks were saved with this conversation.');
+        return;
+      }
+      downloadSynthesizedAudio(pcmList, `${conv.title.replace(/[^a-z0-9_-]/gi, '_')}_audio.wav`);
+    };
+
+    deleteBtn.onclick = async () => {
+      if (confirm(`Are you sure you want to delete "${conv.title}"?`)) {
+        await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+        modal.style.display = 'none';
+        await loadPastConversations();
+        addTerminalLog(`Deleted conversation "${conv.title}".`, 'system');
+      }
+    };
+  } catch (err) {
+    console.error('Error fetching conversation details:', err);
+    container.innerHTML = `<div style="color:#f87171; padding: 16px;">Failed to load conversation: ${err.message}</div>`;
+  }
+}
+
+// ----------------------------------------------------
+// Save Conversation Handlers
+// ----------------------------------------------------
+async function saveCurrentLiveConversation() {
+  if (liveConversationTurns.length === 0) {
+    alert('No dialogue turns recorded yet. Speak into the microphone or use a test scenario first!');
+    return;
+  }
+
+  const [src, tgt] = getLangPair();
+  const title = prompt('Enter a title for this conversation:', `Live Dialogue (${new Date().toLocaleTimeString()})`);
+  if (!title) return;
+
+  const payload = {
+    title: title.trim(),
+    sourceLang: src,
+    targetLang: tgt,
+    mode: 'live',
+    turns: liveConversationTurns,
+    metadata: {
+      totalTurns: liveConversationTurns.length,
+      synthesizedPcmChunks: liveSynthesizedPcmChunks
+    }
+  };
+
+  try {
+    const res = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      alert('Conversation and transcript successfully saved to "Past Conversations" tab!');
+      addTerminalLog(`Saved live conversation: "${title}" (${liveConversationTurns.length} turns).`, 'system');
+    } else {
+      alert('Failed to save conversation.');
+    }
+  } catch (err) {
+    console.error('Error saving live conversation:', err);
+    alert('Network error saving conversation.');
+  }
+}
+
+async function saveCurrentUploadConversation() {
+  if (!currentUploadResult) return;
+  const title = prompt('Enter a title for this recorded conversation:', `Upload: ${currentUploadResult.file_name}`);
+  if (!title) return;
+
+  const turns = [{
+    role: 'recorded-file',
+    roleLabel: `Uploaded Audio (${currentUploadResult.file_name})`,
+    originalText: currentUploadResult.original_transcript,
+    translatedText: currentUploadResult.translated_text,
+    audioBase64: currentUploadResult.audio_base64,
+    time: new Date().toLocaleTimeString(),
+    timestamp: Date.now()
+  }];
+
+  const payload = {
+    title: title.trim(),
+    sourceLang: currentUploadResult.source_lang,
+    targetLang: currentUploadResult.target_lang,
+    mode: 'recorded-upload',
+    turns,
+    metadata: {
+      fileName: currentUploadResult.file_name,
+      totalLatencyMs: currentUploadResult.total_latency_ms
+    }
+  };
+
+  try {
+    const res = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      alert('Recorded conversation successfully saved to "Past Conversations" tab!');
+      addTerminalLog(`Saved upload conversation: "${title}".`, 'system');
+    } else {
+      alert('Failed to save conversation.');
+    }
+  } catch (err) {
+    console.error('Error saving upload conversation:', err);
+    alert('Network error saving conversation.');
+  }
+}
+
+// ----------------------------------------------------
+// Transcript & Audio File Download Utilities
+// ----------------------------------------------------
+function downloadTranscriptFile(turns, baseFilename = 'conversation_transcript') {
+  if (!turns || turns.length === 0) {
+    alert('No conversation transcript to download.');
+    return;
+  }
+
+  let textContent = `# 2-Way Translation Conversation Transcript\n`;
+  textContent += `Generated: ${new Date().toLocaleString()}\n`;
+  textContent += `Total Turns: ${turns.length}\n`;
+  textContent += `====================================================\n\n`;
+
+  turns.forEach((turn, idx) => {
+    textContent += `[Turn ${idx + 1}] ${turn.time || ''} - ${turn.roleLabel || turn.role || 'Speaker'}\n`;
+    textContent += `Original:   ${turn.originalText || ''}\n`;
+    textContent += `Translated: ${turn.translatedText || ''}\n`;
+    if (turn.sttModel) textContent += `STT Model:  ${turn.sttModel}\n`;
+    if (turn.dlpApplied) textContent += `Cloud DLP:  Sanitized / Masked\n`;
+    textContent += `----------------------------------------------------\n\n`;
+  });
+
+  const blob = new Blob([textContent], { type: 'text/markdown;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${baseFilename}_${Date.now()}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadSynthesizedAudio(pcmChunksList, filename = 'translation_audio.wav') {
+  if (!pcmChunksList || pcmChunksList.length === 0) {
+    alert('No audio recorded or synthesized for this conversation.');
+    return;
+  }
+
+  // Concatenate all Int16 PCM samples
+  const sampleRate = pcmChunksList[0].sampleRate || 24000;
+  const arrays = [];
+  let totalLength = 0;
+
+  for (const item of pcmChunksList) {
+    const b64 = item.pcmBase64 || item;
+    const binary = window.atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const int16 = new Int16Array(bytes.buffer);
+    arrays.push(int16);
+    totalLength += int16.length;
+  }
+
+  const mergedInt16 = new Int16Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    mergedInt16.set(arr, offset);
+    offset += arr.length;
+  }
+
+  const wavBlob = int16ToWavBlob(mergedInt16, sampleRate);
+  const url = URL.createObjectURL(wavBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Convert Base64 LINEAR16 PCM to WAV Blob
+function pcm16Base64ToWavBlob(base64Pcm, sampleRate = 24000) {
+  const binary = window.atob(base64Pcm);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const int16 = new Int16Array(bytes.buffer);
+  return int16ToWavBlob(int16, sampleRate);
+}
+
+// Write Standard 44-byte RIFF/WAVE header
+function int16ToWavBlob(int16Samples, sampleRate = 24000) {
+  const numChannels = 1;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = int16Samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // RIFF identifier
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+
+  // fmt sub-chunk
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
+  view.setUint16(20, 1, true);  // AudioFormat (1 for PCM)
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); // BitsPerSample
+
+  // data sub-chunk
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write PCM audio samples
+  let sampleOffset = 44;
+  for (let i = 0; i < int16Samples.length; i++) {
+    view.setInt16(sampleOffset, int16Samples[i], true);
+    sampleOffset += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
 }
 
 window.addEventListener('DOMContentLoaded', init);
