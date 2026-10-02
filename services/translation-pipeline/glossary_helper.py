@@ -58,25 +58,32 @@ def create_translation_api_glossary(gcs_uri: str, source_lang="en", target_lang=
     print(f"[GlossaryHelper] Created glossary: {result.name}")
     return result
 
-def get_glossary_config(source_lang="en", target_lang="es"):
-    """Returns the translate_v3.TranslateTextGlossaryConfig if available."""
+def get_glossary_candidates(source_lang="en", target_lang="es"):
+    """Return ordered candidate glossary configs (new brand-* ID first, then legacy disney-* ID)."""
     src = source_lang.lower().split("-")[0]
     tgt = target_lang.lower().split("-")[0]
 
     base_glossary = os.getenv("GLOSSARY_ID", "brand-parks-glossary-en-es")
-    glossary_id = None
+    candidates = []
     if src == "en" and tgt == "es":
-        glossary_id = base_glossary
+        candidates = [base_glossary, "disney-parks-glossary-en-es"]
     elif src == "es" and tgt == "en":
-        glossary_id = base_glossary.replace("en-es", "es-en")
+        candidates = [base_glossary.replace("en-es", "es-en"), "disney-parks-glossary-es-en"]
     else:
-        glossary_id = f"brand-glossary-{src}-{tgt}"
+        candidates = [f"brand-glossary-{src}-{tgt}", f"disney-glossary-{src}-{tgt}"]
 
-    if not glossary_id:
-        return None
+    seen = []
+    configs = []
+    for gid in candidates:
+        if gid and gid not in seen:
+            seen.append(gid)
+            glossary_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/glossaries/{gid}"
+            configs.append(translate.TranslateTextGlossaryConfig(glossary=glossary_name, ignore_case=True))
+    return configs
 
-    glossary_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/glossaries/{glossary_id}"
-    return translate.TranslateTextGlossaryConfig(
-        glossary=glossary_name,
-        ignore_case=True
-    )
+
+def get_glossary_config(source_lang="en", target_lang="es"):
+    """Returns the primary translate_v3.TranslateTextGlossaryConfig if available."""
+    configs = get_glossary_candidates(source_lang, target_lang)
+    return configs[0] if configs else None
+

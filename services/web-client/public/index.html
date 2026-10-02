@@ -68,24 +68,34 @@
         <!-- Controls Bar -->
         <div class="controls-card">
           <div class="control-group">
-            <label for="langPair">Target Language Pair</label>
-            <select id="langPair" class="custom-select">
-              <option value="en-es" selected>🇲🇽 English ⇄ Latin American Spanish (Español LATAM)</option>
-              <option value="en-es-ES">🇪🇸 English ⇄ Spain Spanish (Castellano)</option>
-              <option value="en-pt">🇧🇷 English ⇄ Portuguese (Português)</option>
-              <option value="en-fr">🇫🇷 English ⇄ French (Français)</option>
-              <option value="en-ja">🇯🇵 English ⇄ Japanese (日本語)</option>
-              <option value="en-zh">🇨🇳 English ⇄ Mandarin (中文)</option>
-            </select>
+            <label for="castLangSelect">Cast Language</label>
+            <select id="castLangSelect" class="custom-select lang-select" data-default="en"></select>
           </div>
 
           <div class="control-group">
-            <label for="sttModelSelect">Speech-to-Text Model</label>
-            <select id="sttModelSelect" class="custom-select">
-              <option value="chirp_3" selected>🎙️ Chirp 3 (Speech v2 GA)</option>
-              <option value="gemini-3.5-transcribe">✨ Gemini 3.5 Live Transcribe</option>
-              <option value="latest_short">⚡ Cloud Speech (latest_short)</option>
+            <label for="guestLangSelect">Guest Language <span class="label-hint" id="guestLangHint">(starting language)</span></label>
+            <select id="guestLangSelect" class="custom-select lang-select" data-default="es"></select>
+            <span class="detected-lang-badge" id="detectedGuestBadge" style="display: none;"></span>
+          </div>
+
+          <div class="control-group toggle-group">
+            <label class="toggle-label">
+              <span>Smart Guest Language Detection</span>
+              <input type="checkbox" id="smartDetectToggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-hint" id="smartDetectHint">Auto-detects the guest's language</span>
+          </div>
+
+          <div class="control-group">
+            <label for="engineSelect">Translation Engine</label>
+            <select id="engineSelect" class="custom-select">
+              <option value="chirp_3" selected>Chirp 3 → Translation → TTS</option>
+              <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe → Translation → TTS</option>
+              <option value="gemini-3.5-live-translate">Gemini 3.5 Live Translate (push-to-talk)</option>
+              <option value="gemini-3.8-live">Gemini 3.8 Live (interpreter)</option>
             </select>
+            <span class="engine-note" id="engineNote">Cloud DLP redacts text before translation and speech.</span>
           </div>
 
           <div class="control-group">
@@ -188,7 +198,7 @@
             <div class="chat-welcome">
               <span class="sparkle-icon">🌐</span>
               <p>Welcome to <strong>2-Way Live Translation</strong>.</p>
-              <p class="sub-hint">Use the dual buttons below: hold <strong>Team Host</strong> to speak English, or hold <strong>Guest</strong> to speak in the guest's language. Real-time Cloud DLP will mask PII & credit cards before translation and synthesis!</p>
+              <p class="sub-hint">Hold <strong>Cast Member</strong> to speak in the cast language, or hold <strong>Guest</strong> to let the guest speak. With Smart Guest Language Detection on, the guest's language is detected automatically and every cast reply is translated into it.</p>
             </div>
           </div>
         </div>
@@ -216,8 +226,8 @@
         <div class="action-bar-2way">
           <!-- Team Host (English) Speak Button -->
           <div class="speaker-col">
-            <span class="speaker-label cast-member-label">Team Host (English)</span>
-            <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to Speak English">
+            <span class="speaker-label cast-member-label" id="castSpeakerLabel">Cast Member (English)</span>
+            <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to speak as the Cast Member">
               <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
                 <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
@@ -659,37 +669,40 @@
           <div class="panel-header">
             <div>
               <h2>📁 Upload Recorded Conversation</h2>
-              <p>Upload a recorded audio conversation (WAV, MP3, M4A, OGG, WebM) to transcribe with Chirp 3, redact sensitive PII with Cloud DLP, translate with Brand Glossary enforcement, and synthesize speech.</p>
+              <p>Upload a recorded conversation (WAV, MP3, M4A, OGG, WebM). Choose Chirp 3, Gemini 3.5 Transcribe, or Gemini 3.8 Live: each utterance is transcribed and language-detected with the cast language as anchor (Gemini 3.5 Live Translate is Push-to-Talk only).</p>
             </div>
             <div class="upload-badge">
-              <span>Cloud Chirp 3 + DLP + MT v3</span>
+              <span id="uploadEngineBadge">Cloud Chirp 3 + DLP + MT v3</span>
             </div>
           </div>
 
           <!-- Configuration Controls for Upload -->
           <div class="controls-card" style="margin-top: 14px;">
             <div class="control-group">
-              <label for="uploadLangPair">Conversation Language Direction</label>
-              <select id="uploadLangPair" class="custom-select">
-                <option value="en-es" selected>🇺🇸 English ➔ 🇲🇽 Spanish (LATAM)</option>
-                <option value="es-en">🇲🇽 Spanish ➔ 🇺🇸 English</option>
-                <option value="en-pt">🇺🇸 English ➔ 🇧🇷 Portuguese</option>
-                <option value="pt-en">🇧🇷 Portuguese ➔ 🇺🇸 English</option>
-                <option value="en-fr">🇺🇸 English ➔ 🇫🇷 French</option>
-                <option value="fr-en">🇫🇷 French ➔ 🇺🇸 English</option>
-                <option value="en-ja">🇺🇸 English ➔ 🇯🇵 Japanese</option>
-                <option value="ja-en">🇯🇵 Japanese ➔ 🇺🇸 English</option>
-                <option value="en-zh">🇺🇸 English ➔ 🇨🇳 Mandarin</option>
-                <option value="zh-en">🇨🇳 Mandarin ➔ 🇺🇸 English</option>
+              <label for="uploadEngineSelect">Translation Engine <span class="label-hint">(3.5 Live Translate is Push-to-Talk only)</span></label>
+              <select id="uploadEngineSelect" class="custom-select">
+                <option value="chirp_3" selected>Chirp 3 (STT v2) → Translation → TTS</option>
+                <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe → Translation → TTS</option>
+                <option value="gemini-3.8-live">Gemini 3.8 Live (Speech-to-Speech Interpreter)</option>
               </select>
             </div>
 
             <div class="control-group">
-              <label for="uploadSttModel">Speech-to-Text Model</label>
-              <select id="uploadSttModel" class="custom-select">
-                <option value="chirp_3" selected>🎙️ Chirp 3 (Speech v2 GA)</option>
-                <option value="latest_short">⚡ Cloud Speech (latest_short)</option>
-              </select>
+              <label for="uploadCastLang">Cast Language</label>
+              <select id="uploadCastLang" class="custom-select lang-select" data-default="en"></select>
+            </div>
+
+            <div class="control-group">
+              <label for="uploadGuestLang">Guest Language <span class="label-hint">(fallback)</span></label>
+              <select id="uploadGuestLang" class="custom-select lang-select" data-default="es"></select>
+            </div>
+
+            <div class="control-group toggle-group" style="padding-top: 12px;">
+              <label class="toggle-label">
+                <span>Smart Guest Language Detection</span>
+                <input type="checkbox" id="uploadSmartDetect" checked>
+                <span class="toggle-slider"></span>
+              </label>
             </div>
 
             <div class="control-group toggle-group" style="padding-top: 12px;">
@@ -707,6 +720,7 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <div id="uploadEngineNote" class="engine-note" style="display: none;"></div>
           </div>
 
           <!-- File Upload Dropzone -->
@@ -779,6 +793,12 @@
                 </div>
               </div>
             </div>
+
+            <div class="upload-segments-header">
+              <span>Conversation Turns <span class="label-hint">(click any turn to play from that point)</span></span>
+              <span id="uploadDetectedGuest" class="detected-lang-badge" style="display: none;"></span>
+            </div>
+            <div class="upload-segments" id="uploadSegmentsList"></div>
           </div>
         </div>
       </section>
@@ -840,6 +860,27 @@
                 </button>
               </div>
 
+              <!-- Interactive Conversation Audio Player & Synced Timeline Scrubber -->
+              <div id="modalAudioPlayerBar" class="modal-audio-player-bar" style="display: none;">
+                <div class="modal-player-top-row">
+                  <button type="button" id="modalPlayPauseBtn" class="modal-play-btn">
+                    <span id="modalPlayPauseIcon">▶</span>
+                    <span id="modalPlayPauseText">Play Conversation</span>
+                  </button>
+                  <div class="modal-scrubber-wrap">
+                    <div class="modal-timeline-track-wrap">
+                      <input type="range" id="modalTimelineScrubber" class="modal-timeline-scrubber" min="0" max="100" step="0.01" value="0">
+                      <div id="modalTimelineMarkers" class="modal-timeline-markers"></div>
+                    </div>
+                  </div>
+                  <span id="modalTimeDisplay" class="modal-time-display">0:00 / 0:00</span>
+                </div>
+                <div class="modal-player-sub-row">
+                  <span id="modalActiveTurnLabel" class="modal-active-turn-label">💡 Click Play or click any conversation turn below to jump to that part of the conversation</span>
+                </div>
+                <audio id="modalAudioElement" preload="metadata" style="display: none;"></audio>
+              </div>
+
               <div class="modal-turns-container" id="modalTurnsContainer">
                 <!-- Populated dynamically with turn bubbles -->
               </div>
@@ -855,6 +896,6 @@
     </footer>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

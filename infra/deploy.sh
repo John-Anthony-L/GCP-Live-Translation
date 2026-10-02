@@ -70,6 +70,20 @@ gcloud services enable \
     storage.googleapis.com \
     cloudbuild.googleapis.com
 
+# 2b. Ensure Cloud Run runtime service account has Speech V2, Vertex AI, Translation, and DLP permissions
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)' 2>/dev/null || true)"
+if [ -n "${PROJECT_NUMBER}" ]; then
+    RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+    echo "🔐 Ensuring IAM roles on ${RUNTIME_SA} (Speech V2, Vertex AI, Translation v3, Cloud DLP)..."
+    for ROLE in roles/speech.client roles/aiplatform.user roles/cloudtranslate.user roles/dlp.user roles/run.invoker; do
+        gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+            --member="serviceAccount:${RUNTIME_SA}" \
+            --role="${ROLE}" \
+            --Condition=None \
+            --quiet > /dev/null 2>&1 || true
+    done
+fi
+
 # 3. Create GCS Glossary Bucket & Upload Brand Glossary
 echo ""
 echo "📦 Step 2: Creating GCS Glossary Bucket and Uploading Glossary..."
@@ -80,7 +94,7 @@ fi
 gcloud storage cp "glossaries/${CSV_FILE}" "gs://${BUCKET_NAME}/${CSV_FILE}"
 echo "✅ Glossary uploaded to gs://${BUCKET_NAME}/${CSV_FILE}"
 
-# 4. Deploy Service 1: Translation Pipeline (Python FastAPI: Chirp 3 GA + Cloud DLP + MT v3 + Chirp 3 HD TTS)
+# 4. Deploy Service 1: Translation Pipeline (Python FastAPI: Chirp 3 V2 + Gemini 3.5/3.8 Live + Cloud DLP + MT v3 + Chirp 3 HD TTS)
 echo ""
 echo "🚀 Step 3: Deploying Translation Pipeline to Cloud Run..."
 gcloud run deploy live-translation-pipeline \
@@ -90,7 +104,7 @@ gcloud run deploy live-translation-pipeline \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=us,STT_MODEL=chirp_3,GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME}" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=${CHIRP_REGION:-us},GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME},GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview},GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global},GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview},GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global},GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-${REGION}}" \
     --timeout 3600 \
     --cpu 2 \
     --memory 2Gi

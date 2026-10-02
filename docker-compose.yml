@@ -3,8 +3,8 @@ version: '3.8'
 services:
   translation-pipeline:
     build:
-      context: .
-      dockerfile: services/translation-pipeline/Dockerfile
+      context: services/translation-pipeline
+      dockerfile: Dockerfile
     ports:
       - "8081:8081"
     environment:
@@ -12,7 +12,12 @@ services:
       - PROJECT_ID=${PROJECT_ID:-your-gcp-project-id}
       - LOCATION=${LOCATION:-us-central1}
       - CHIRP_REGION=${CHIRP_REGION:-us}
-      - STT_MODEL=${STT_MODEL:-chirp_3}
+      - GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview}
+      - GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global}
+      - GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview}
+      - GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global}
+      - GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live}
+      - GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1}
       - GLOSSARY_ID=${GLOSSARY_ID:-brand-parks-glossary-en-es}
       - GLOSSARY_BUCKET=${GLOSSARY_BUCKET:-your-gcp-project-id-glossaries}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json

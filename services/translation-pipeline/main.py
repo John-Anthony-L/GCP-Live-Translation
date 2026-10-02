@@ -1,18 +1,45 @@
 import os
 import base64
 import asyncio
+from array import array
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
-from google.cloud import speech_v1p1beta1 as speech
-from google import genai
-from google.genai import types
-from pipeline import LiveTranslationPipeline, DisneyTranslationPipeline
 from glossary_helper import create_or_update_gcs_glossary, create_translation_api_glossary
 from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
+from languages import lang_info, resolve_language, same_language, public_catalog
+from live_workers import (
+    pipeline,
+    SessionState,
+    BaseStreamWorker,
+    Chirp3StreamWorker,
+    GeminiTranscribeWorker,
+    StreamingSTTWorker,
+    GeminiLiveTranscribeWorker,
+    create_stream_worker,
+    process_text_turn,
+    process_batch_audio_turn,
+    translate_utterance_gemini38,
+    apply_guest_detection,
+    route_turn,
+    safe_send,
+    ENGINE_CHIRP3,
+    ENGINE_GEMINI_TRANSCRIBE,
+    ENGINE_LIVE_TRANSLATE,
+    ENGINE_LIVE_38,
+    GEMINI_TRANSCRIBE_MODEL,
+    GEMINI_LIVE_TRANSLATE_MODEL,
+    GEMINI_LIVE_MODEL,
+)
 
-app = FastAPI(title="Enterprise Live Translation - Chirp 3 GA + Cloud DLP + MT v3 + Chirp 3 HD TTS")
+
+def resolve_locale(lang_prefix: str) -> str:
+    """Backward-compatible helper returning the BCP-47 STT/TTS locale for a language code."""
+    return lang_info(lang_prefix)["stt"]
+
+
+app = FastAPI(title="Enterprise Live Translation - Chirp 3 + Cloud DLP + MT v3 + Chirp 3 HD TTS + Gemini Live")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,472 +49,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pipeline = LiveTranslationPipeline()
-
 PROJECT_ID = os.getenv("PROJECT_ID", "gcp-live-translation")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
-def resolve_locale(lang: str) -> str:
-    """Resolve language identifier to standard STT & TTS BCP-47 locale code."""
-    l = lang.lower()
-    if l in ["en", "en-us"]:
-        return "en-US"
-    if l in ["es", "es-us", "es-419", "es-latam"]:
-        return "es-US"  # Latin America & US Spanish
-    if l in ["es-es", "es-spain"]:
-        return "es-ES"  # European Spanish
-    if "-" in lang:
-        parts = lang.split("-")
-        return f"{parts[0].lower()}-{parts[1].upper()}"
-    return f"{lang}-{lang.upper()}"
+ENGINES = [
+    {"id": ENGINE_CHIRP3, "label": "Chirp 3 -> Translation -> TTS", "speech_to_speech": False, "ptt_only": False},
+    {"id": ENGINE_GEMINI_TRANSCRIBE, "label": f"{GEMINI_TRANSCRIBE_MODEL} -> Translation -> TTS", "speech_to_speech": False, "ptt_only": False},
+    {"id": ENGINE_LIVE_TRANSLATE, "label": GEMINI_LIVE_TRANSLATE_MODEL, "speech_to_speech": True, "ptt_only": True},
+    {"id": ENGINE_LIVE_38, "label": GEMINI_LIVE_MODEL, "speech_to_speech": True, "ptt_only": False},
+]
 
-class StreamingSTTWorker:
-    """
-    Standard Cloud Speech Streaming Worker (Speech v1p1beta1 / v2 Chirp 3).
-    Includes real-time Cloud DLP Sensitive Data Protection and PII Scrubbing.
-    """
-    def __init__(
-        self,
-        websocket: WebSocket,
-        src_lang: str,
-        tgt_lang: str,
-        speaker_role: str,
-        use_glossary: bool,
-        use_dlp: bool = True,
-        dlp_info_types: Optional[List[str]] = None
-    ):
-        self.websocket = websocket
-        self.src_lang = src_lang
-        self.tgt_lang = tgt_lang
-        self.speaker_role = speaker_role
-        self.use_glossary = use_glossary
-        self.use_dlp = use_dlp
-        self.dlp_info_types = dlp_info_types
-        self.queue = asyncio.Queue()
-        self.is_running = True
-        self.task = None
-
-    def start(self):
-        self.task = asyncio.create_task(self._run_stream())
-
-    async def push_audio(self, pcm_bytes: bytes):
-        if self.is_running:
-            await self.queue.put(pcm_bytes)
-
-    async def stop(self):
-        self.is_running = False
-        await self.queue.put(None)
-        if self.task and not self.task.done():
-            try:
-                # Wait up to 3.5 seconds for final speech results to be delivered
-                await asyncio.wait_for(asyncio.shield(self.task), timeout=3.5)
-            except Exception:
-                if not self.task.done():
-                    self.task.cancel()
-
-    async def _generator(self):
-        while True:
-            chunk = await self.queue.get()
-            if chunk is None:
-                break
-            yield speech.StreamingRecognizeRequest(audio_content=chunk)
-
-    async def _run_stream(self):
-        try:
-            if self.speaker_role == "guest":
-                stt_lang = resolve_locale(self.tgt_lang)
-                alt_langs = None
-            elif self.speaker_role == "ambient":
-                stt_lang = "en-US"
-                target_stt = resolve_locale(self.tgt_lang)
-                alt_langs = [target_stt]
-            else:
-                stt_lang = resolve_locale(self.src_lang)
-                alt_langs = None
-
-            print(f"[StreamingSTT] Starting stream: lang={stt_lang}, alt={alt_langs}, role={self.speaker_role}, dlp={self.use_dlp}", flush=True)
-            streaming_config = pipeline.get_streaming_config(lang_code=stt_lang, alternative_lang_codes=alt_langs)
-            
-            async def request_stream():
-                yield speech.StreamingRecognizeRequest(streaming_config=streaming_config)
-                async for req in self._generator():
-                    yield req
-
-            responses = await pipeline.speech_async_client.streaming_recognize(requests=request_stream())
-            
-            async for response in responses:
-                if not response.results:
-                    continue
-                result = response.results[0]
-                if not result.alternatives:
-                    continue
-                
-                transcript = result.alternatives[0].transcript
-                if not transcript or not transcript.strip():
-                    continue
-
-                is_final = result.is_final
-                detected = getattr(result, 'language_code', stt_lang)
-                print(f"[StreamingSTT] STT Response: '{transcript}' (is_final={is_final}, detected={detected})", flush=True)
-
-                if self.speaker_role == "ambient":
-                    if detected.lower().startswith(self.tgt_lang.lower()):
-                        cur_src = self.tgt_lang
-                        cur_tgt = self.src_lang
-                        cur_role = "guest"
-                    else:
-                        cur_src = self.src_lang
-                        cur_tgt = self.tgt_lang
-                        cur_role = "cast-member"
-                elif self.speaker_role == "guest":
-                    cur_src = self.tgt_lang
-                    cur_tgt = self.src_lang
-                    cur_role = "guest"
-                else:
-                    cur_src = self.src_lang
-                    cur_tgt = self.tgt_lang
-                    cur_role = "cast-member"
-
-                if not is_final:
-                    # Live interim progressive text
-                    await self.websocket.send_json({
-                        "type": "interim_transcript",
-                        "transcript": transcript,
-                        "speakerRole": cur_role
-                    })
-                else:
-                    # Final sentence boundary reached!
-                    # 1. Cloud DLP Sensitive Data Protection Scrubbing
-                    dlp_res = dlp_manager.sanitize_text(
-                        transcript,
-                        enabled=self.use_dlp,
-                        active_info_types=self.dlp_info_types
-                    )
-                    sanitized_transcript = dlp_res["sanitized_text"]
-
-                    stt_time = 45.0
-                    await self.websocket.send_json({
-                        "type": "stt_transcript",
-                        "transcript": transcript,
-                        "sanitized_transcript": sanitized_transcript,
-                        "dlp_applied": dlp_res["pii_detected"],
-                        "confidence": result.alternatives[0].confidence,
-                        "stt_ms": stt_time,
-                        "stt_model": "chirp_3 (GA Speech Generation)",
-                        "speakerRole": cur_role,
-                        "detectedLang": detected,
-                        "is_final": True
-                    })
-
-                    # Send DLP status event
-                    await self.websocket.send_json({
-                        "type": "dlp_status",
-                        "original_text": transcript,
-                        "sanitized_text": sanitized_transcript,
-                        "pii_detected": dlp_res["pii_detected"],
-                        "findings": dlp_res["findings"],
-                        "active_info_types": dlp_res["active_info_types"],
-                        "dlp_latency_ms": dlp_res["latency_ms"],
-                        "dlp_enabled": self.use_dlp,
-                        "speakerRole": cur_role
-                    })
-
-                    # 2. Translate sanitized sentence immediately
-                    mt_res = pipeline.translate_text(
-                        sanitized_transcript,
-                        source_lang=cur_src,
-                        target_lang=cur_tgt,
-                        use_glossary=self.use_glossary
-                    )
-                    print(f"[StreamingSTT] Translation: '{sanitized_transcript}' -> '{mt_res['translated_text']}'", flush=True)
-                    await self.websocket.send_json({
-                        "type": "translation_text",
-                        "translated_text": mt_res["translated_text"],
-                        "glossary_applied": mt_res["glossary_applied"],
-                        "translation_ms": mt_res["latency_ms"],
-                        "model": mt_res["model"],
-                        "speakerRole": cur_role
-                    })
-
-                    # 3. Synthesize speech (Audio never says raw credit card or PII aloud)
-                    tts_lang_code = f"{cur_tgt}-US" if cur_tgt in ["en", "es"] else f"{cur_tgt}-{cur_tgt.upper()}"
-                    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
-                    
-                    total_latency = round(stt_time + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
-                    await self.websocket.send_json({
-                        "type": "audio",
-                        "pcm": tts_res["audio_base64"],
-                        "sampleRate": 24000,
-                        "total_latency_ms": total_latency,
-                        "latency_breakdown": {
-                            "stt_ms": stt_time,
-                            "dlp_ms": dlp_res["latency_ms"],
-                            "translation_ms": mt_res["latency_ms"],
-                            "tts_ms": tts_res["latency_ms"]
-                        },
-                        "speakerRole": cur_role
-                    })
-        except asyncio.CancelledError:
-            pass
-        except Exception as err:
-            import traceback
-            print(f"[StreamingSTT] Worker stream error: {err}", flush=True)
-            traceback.print_exc()
-
-class GeminiLiveTranscribeWorker:
-    """
-    Gemini 3.5 Live Transcribe Worker (gemini-3.5-transcribe-live-preview).
-    Connects to the Live API session using the official google-genai SDK,
-    streams raw 16kHz PCM audio chunks via send_realtime_input,
-    receives real-time interim & final transcripts, runs Cloud DLP sanitization,
-    and triggers downstream Translation LLM and Neural TTS immediately.
-    """
-    def __init__(
-        self,
-        websocket: WebSocket,
-        src_lang: str,
-        tgt_lang: str,
-        speaker_role: str,
-        use_glossary: bool,
-        use_dlp: bool = True,
-        dlp_info_types: Optional[List[str]] = None
-    ):
-        self.websocket = websocket
-        self.src_lang = src_lang
-        self.tgt_lang = tgt_lang
-        self.speaker_role = speaker_role
-        self.use_glossary = use_glossary
-        self.use_dlp = use_dlp
-        self.dlp_info_types = dlp_info_types
-        self.queue = asyncio.Queue()
-        self.is_running = True
-        self.task = None
-
-    def start(self):
-        self.task = asyncio.create_task(self._run_stream())
-
-    async def push_audio(self, pcm_bytes: bytes):
-        if self.is_running:
-            await self.queue.put(pcm_bytes)
-
-    async def stop(self):
-        self.is_running = False
-        await self.queue.put(None)
-        if self.task and not self.task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(self.task), timeout=3.5)
-            except Exception:
-                if not self.task.done():
-                    self.task.cancel()
-
-    async def _run_stream(self):
-        try:
-            # 1. Configure language codes
-            if self.speaker_role == "guest":
-                lang_code = f"{self.tgt_lang}-US" if self.tgt_lang in ["en", "es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
-                stt_langs = [lang_code]
-            elif self.speaker_role == "ambient":
-                tgt_code = f"{self.tgt_lang}-US" if self.tgt_lang in ["es"] else f"{self.tgt_lang}-{self.tgt_lang.upper()}"
-                stt_langs = ["en-US", tgt_code]
-            else:
-                lang_code = f"{self.src_lang}-US" if self.src_lang in ["en", "es"] else f"{self.src_lang}-{self.src_lang.upper()}"
-                stt_langs = [lang_code]
-
-            print(f"[GeminiLiveTranscribe] Connecting session: langs={stt_langs}, role={self.speaker_role}, dlp={self.use_dlp}", flush=True)
-
-            try:
-                client = genai.Client(enterprise=True, project=PROJECT_ID, location=LOCATION)
-            except Exception:
-                client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
-
-            config = types.LiveConnectConfig(
-                response_modalities=["TEXT"],
-                input_audio_transcription=types.AudioTranscriptionConfig(
-                    language_codes=stt_langs,
-                ),
-            )
-
-            async with client.aio.live.connect(model="gemini-3.5-transcribe-live-preview", config=config) as session:
-                print(f"[GeminiLiveTranscribe] Connected to gemini-3.5-transcribe-live-preview successfully!", flush=True)
-
-                async def audio_sender():
-                    try:
-                        while self.is_running:
-                            chunk = await self.queue.get()
-                            if chunk is None:
-                                await session.send_realtime_input(audio_stream_end=True)
-                                break
-                            await session.send_realtime_input(
-                                audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
-                            )
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as err:
-                        print(f"[GeminiLiveTranscribe] Send error: {err}", flush=True)
-
-                async def transcript_receiver():
-                    try:
-                        async for message in session.receive():
-                            if not message.server_content:
-                                continue
-
-                            sc = message.server_content
-
-                            # Determine speaker and translation routing
-                            cur_role = self.speaker_role
-                            if cur_role == "guest":
-                                cur_src = self.tgt_lang
-                                cur_tgt = self.src_lang
-                            else:
-                                cur_src = self.src_lang
-                                cur_tgt = self.tgt_lang
-
-                            # 1. Interim live transcription
-                            if hasattr(sc, "interim_input_transcription") and sc.interim_input_transcription:
-                                interim_text = getattr(sc.interim_input_transcription, "text", str(sc.interim_input_transcription))
-                                if interim_text and interim_text.strip():
-                                    await self.websocket.send_json({
-                                        "type": "interim_transcript",
-                                        "transcript": interim_text,
-                                        "speakerRole": cur_role
-                                    })
-
-                            # 2. Final input transcription boundary
-                            if hasattr(sc, "input_transcription") and sc.input_transcription:
-                                transcript = getattr(sc.input_transcription, "text", str(sc.input_transcription))
-                                if transcript and transcript.strip():
-                                    # Cloud DLP Sanitization
-                                    dlp_res = dlp_manager.sanitize_text(
-                                        transcript,
-                                        enabled=self.use_dlp,
-                                        active_info_types=self.dlp_info_types
-                                    )
-                                    sanitized_transcript = dlp_res["sanitized_text"]
-
-                                    stt_time = 35.0
-                                    await self.websocket.send_json({
-                                        "type": "stt_transcript",
-                                        "transcript": transcript,
-                                        "sanitized_transcript": sanitized_transcript,
-                                        "dlp_applied": dlp_res["pii_detected"],
-                                        "confidence": 1.0,
-                                        "stt_ms": stt_time,
-                                        "stt_model": "gemini-3.5-transcribe-live-preview",
-                                        "speakerRole": cur_role,
-                                        "detectedLang": stt_langs[0],
-                                        "is_final": True
-                                    })
-
-                                    # Send DLP status event
-                                    await self.websocket.send_json({
-                                        "type": "dlp_status",
-                                        "original_text": transcript,
-                                        "sanitized_text": sanitized_transcript,
-                                        "pii_detected": dlp_res["pii_detected"],
-                                        "findings": dlp_res["findings"],
-                                        "active_info_types": dlp_res["active_info_types"],
-                                        "dlp_latency_ms": dlp_res["latency_ms"],
-                                        "dlp_enabled": self.use_dlp,
-                                        "speakerRole": cur_role
-                                    })
-
-                                    # Translate sanitized sentence immediately
-                                    mt_res = pipeline.translate_text(
-                                        sanitized_transcript,
-                                        source_lang=cur_src,
-                                        target_lang=cur_tgt,
-                                        use_glossary=self.use_glossary
-                                    )
-                                    print(f"[GeminiLiveTranscribe] Translation: '{sanitized_transcript}' -> '{mt_res['translated_text']}'", flush=True)
-                                    await self.websocket.send_json({
-                                        "type": "translation_text",
-                                        "translated_text": mt_res["translated_text"],
-                                        "glossary_applied": mt_res["glossary_applied"],
-                                        "translation_ms": mt_res["latency_ms"],
-                                        "model": mt_res["model"],
-                                        "speakerRole": cur_role
-                                    })
-
-                                    # Synthesize speech
-                                    tts_lang_code = f"{cur_tgt}-US" if cur_tgt in ["en", "es"] else f"{cur_tgt}-{cur_tgt.upper()}"
-                                    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
-
-                                    total_latency = round(stt_time + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
-                                    await self.websocket.send_json({
-                                        "type": "audio",
-                                        "pcm": tts_res["audio_base64"],
-                                        "sampleRate": 24000,
-                                        "total_latency_ms": total_latency,
-                                        "latency_breakdown": {
-                                            "stt_ms": stt_time,
-                                            "dlp_ms": dlp_res["latency_ms"],
-                                            "translation_ms": mt_res["latency_ms"],
-                                            "tts_ms": tts_res["latency_ms"]
-                                        },
-                                        "speakerRole": cur_role
-                                    })
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as err:
-                        print(f"[GeminiLiveTranscribe] Receive error: {err}", flush=True)
-
-                await asyncio.gather(audio_sender(), transcript_receiver())
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"[GeminiLiveTranscribe] Live session fallback triggered: {e}", flush=True)
-            fallback = StreamingSTTWorker(
-                websocket=self.websocket,
-                src_lang=self.src_lang,
-                tgt_lang=self.tgt_lang,
-                speaker_role=self.speaker_role,
-                use_glossary=self.use_glossary,
-                use_dlp=self.use_dlp,
-                dlp_info_types=self.dlp_info_types
-            )
-            while not self.queue.empty():
-                c = await self.queue.get()
-                if c is not None:
-                    await fallback.push_audio(c)
-            fallback.start()
-            while self.is_running:
-                c = await self.queue.get()
-                if c is None:
-                    await fallback.stop()
-                    break
-                await fallback.push_audio(c)
-
-def create_stream_worker(
-    websocket: WebSocket,
-    src: str,
-    tgt: str,
-    speaker_role: str,
-    use_glossary: bool,
-    use_dlp: bool = True,
-    dlp_info_types: Optional[List[str]] = None,
-    stt_model: Optional[str] = None
-):
-    stt_engine = stt_model or os.getenv("STT_MODEL", "chirp_3")
-    if "gemini" in stt_engine.lower():
-        return GeminiLiveTranscribeWorker(
-            websocket=websocket,
-            src_lang=src,
-            tgt_lang=tgt,
-            speaker_role=speaker_role,
-            use_glossary=use_glossary,
-            use_dlp=use_dlp,
-            dlp_info_types=dlp_info_types
-        )
-    return StreamingSTTWorker(
-        websocket=websocket,
-        src_lang=src,
-        tgt_lang=tgt,
-        speaker_role=speaker_role,
-        use_glossary=use_glossary,
-        use_dlp=use_dlp,
-        dlp_info_types=dlp_info_types
-    )
 
 class TextTranslateRequest(BaseModel):
     text: str
@@ -498,8 +69,16 @@ class TextTranslateRequest(BaseModel):
     use_dlp: bool = True
     dlp_info_types: Optional[List[str]] = None
 
+
 class AudioTranslateRequest(BaseModel):
     audio_base64: str
+    # Cast member language anchor (preferred)
+    cast_lang: Optional[str] = None
+    guest_lang: Optional[str] = None
+    smart_detect: bool = True
+    voice: Optional[str] = "Aoede"
+    engine: Optional[str] = None
+    # Legacy source/target pair (used when cast_lang/guest_lang are omitted)
     source_lang: str = "en"
     target_lang: str = "es"
     use_glossary: bool = True
@@ -508,10 +87,12 @@ class AudioTranslateRequest(BaseModel):
     use_dlp: bool = True
     dlp_info_types: Optional[List[str]] = None
 
+
 class DlpSanitizeRequest(BaseModel):
     text: str
     enabled: bool = True
     info_types: Optional[List[str]] = None
+
 
 @app.get("/")
 def root():
@@ -519,14 +100,19 @@ def root():
         "service": "Enterprise Live Translation Advanced Pipeline",
         "status": "online",
         "models": {
-            "speech_to_text": os.getenv("STT_MODEL", "chirp_3"),
+            "speech_to_text": [
+                "chirp_3 (Speech-to-Text V2, streaming + language auto-detect)",
+                f"{GEMINI_TRANSCRIBE_MODEL} (Gemini 3.5 Live Transcribe, global)",
+            ],
             "data_loss_prevention": "Google Cloud Sensitive Data Protection (DLP)",
             "machine_translation": os.getenv("TRANSLATION_MODEL", "general/translation-llm"),
-            "text_to_speech": "Google Cloud Chirp 3 HD Voices"
+            "text_to_speech": "Google Cloud Chirp 3 HD Voices",
+            "speech_to_speech": [GEMINI_LIVE_TRANSLATE_MODEL, GEMINI_LIVE_MODEL],
         },
         "endpoints": {
             "health": "/health",
             "swagger_docs": "/docs",
+            "languages": "GET /api/languages",
             "dlp_catalog": "GET /api/dlp/catalog",
             "dlp_sanitize": "POST /api/dlp/sanitize",
             "translate_text": "POST /api/translate-text",
@@ -536,17 +122,25 @@ def root():
         "web_ui": "http://localhost:3000"
     }
 
+
 @app.get("/health")
 def health():
     return {
         "status": "healthy",
         "service": "translation-pipeline",
-        "project_id": os.getenv("PROJECT_ID", "gcp-live-translation"),
-        "location": os.getenv("LOCATION", "us-central1"),
-        "stt_model": os.getenv("STT_MODEL", "chirp_3"),
+        "project_id": PROJECT_ID,
+        "location": LOCATION,
+        "chirp_region": pipeline.chirp_region,
         "dlp_enabled": True,
-        "translation_model": os.getenv("TRANSLATION_MODEL", "general/translation-llm")
+        "translation_model": os.getenv("TRANSLATION_MODEL", "general/translation-llm"),
+        "engines": [e["id"] for e in ENGINES],
     }
+
+
+@app.get("/api/languages")
+def get_languages():
+    return {"languages": public_catalog(), "engines": ENGINES}
+
 
 @app.get("/api/dlp/catalog")
 def get_dlp_catalog():
@@ -555,6 +149,7 @@ def get_dlp_catalog():
         "catalog": dlp_manager.get_catalog()
     }
 
+
 @app.post("/api/dlp/sanitize")
 def sanitize_dlp_text(req: DlpSanitizeRequest):
     return dlp_manager.sanitize_text(
@@ -562,6 +157,7 @@ def sanitize_dlp_text(req: DlpSanitizeRequest):
         enabled=req.enabled,
         active_info_types=req.info_types
     )
+
 
 @app.post("/api/translate-text")
 def translate_text(req: TextTranslateRequest):
@@ -572,51 +168,370 @@ def translate_text(req: TextTranslateRequest):
     )
     res = pipeline.translate_text(
         text=dlp_res["sanitized_text"],
-        source_lang=req.source_lang,
-        target_lang=req.target_lang,
+        source_lang=lang_info(req.source_lang)["mt"],
+        target_lang=lang_info(req.target_lang)["mt"],
         use_glossary=req.use_glossary,
         model=req.model
     )
     res["dlp"] = dlp_res
     return res
 
+
+def _split_pcm_windows(pcm: bytes, window_s: int = 55, search_s: int = 5) -> List[bytes]:
+    """Split 16kHz PCM into < 1 minute windows (Chirp 3 Recognize limit), cutting at the quietest 100ms frame."""
+    bytes_per_s = 32000
+    win, search, frame = window_s * bytes_per_s, search_s * bytes_per_s, 3200
+    windows, start, n = [], 0, len(pcm)
+    while n - start > win:
+        best_pos, best_energy = start + win, None
+        for pos in range(start + win - search, start + win, frame):
+            seg = pcm[pos:pos + frame]
+            seg = seg[: len(seg) // 2 * 2]
+            energy = sum(abs(s) for s in array("h", seg))
+            if best_energy is None or energy < best_energy:
+                best_pos, best_energy = pos, energy
+        windows.append(pcm[start:best_pos])
+        start = best_pos
+    windows.append(pcm[start:])
+    return windows
+
+
+def _split_pcm_utterances(pcm: bytes, max_window_s: int = 35) -> List[bytes]:
+    """Split 16kHz PCM at natural pauses (>= 650ms silence after >= 1.2s of speech) so multi-turn
+    recordings are segmented per speaker turn for Gemini 3.5 Transcribe and Gemini 3.8 Live.
+    """
+    frame = 3200  # 100ms at 16kHz 16-bit mono
+    n = len(pcm) // 2 * 2
+    if n <= frame * 15:
+        return [pcm] if pcm else []
+
+    energies = []
+    for pos in range(0, n, frame):
+        seg = pcm[pos:min(pos + frame, n)]
+        seg = seg[: len(seg) // 2 * 2]
+        if not seg:
+            break
+        samples = array("h", seg)
+        energies.append(sum(abs(s) for s in samples) / max(1, len(samples)))
+
+    if not energies:
+        return [pcm]
+
+    sorted_e = sorted(energies)
+    noise_floor = sorted_e[max(0, len(sorted_e) // 5)]
+    peak_e = sorted_e[-1]
+    silence_thresh = max(120.0, min(450.0, noise_floor * 1.8 + (peak_e - noise_floor) * 0.06))
+
+    utterances: List[bytes] = []
+    cur_start = 0
+    voiced_frames = 0
+    silent_run = 0
+    max_frames = max_window_s * 10
+
+    for idx, e in enumerate(energies):
+        if e >= silence_thresh:
+            voiced_frames += 1
+            silent_run = 0
+        else:
+            silent_run += 1
+
+        frames_in_seg = idx - (cur_start // frame) + 1
+        # Cut when >= 700ms of silence follows >= 1.2s of voiced speech, or when reaching max_window_s
+        if (voiced_frames >= 12 and silent_run >= 7) or frames_in_seg >= max_frames:
+            cut_byte = min(n, (idx + 1) * frame)
+            chunk = pcm[cur_start:cut_byte]
+            if voiced_frames >= 3:
+                utterances.append(chunk)
+            cur_start = cut_byte
+            voiced_frames = 0
+            silent_run = 0
+
+    if cur_start < n and voiced_frames >= 2:
+        utterances.append(pcm[cur_start:n])
+
+    return utterances or _split_pcm_windows(pcm, window_s=max_window_s)
+
+
 @app.post("/api/translate-audio")
-def translate_audio(req: AudioTranslateRequest):
+async def translate_audio(req: AudioTranslateRequest):
+    """Translate a recorded conversation with the cast member language as anchor.
+
+    Supports three engines:
+      - `chirp_3`: Speech-to-Text V2 (`chirp_3`) -> Cloud DLP -> Translation v3 -> Chirp 3 HD TTS
+      - `gemini-3.5-transcribe`: `gemini-3.5-transcribe-preview` (`global`) -> Cloud DLP -> Translation v3 -> Chirp 3 HD TTS
+      - `gemini-3.8-live`: `gemini-3.8-live` speech-to-speech interpreter (`us-central1`) + Cloud DLP on transcripts
+    """
     pcm_bytes = base64.b64decode(req.audio_base64)
-    model = req.stt_model or os.getenv("STT_MODEL", "chirp_3")
-    stt_lang = f"{req.source_lang}-US" if req.source_lang in ["en", "es"] else f"{req.source_lang}-{req.source_lang.upper()}"
-    if model in ["chirp_3", "chirp_2", "chirp"]:
-        stt_res = pipeline.transcribe_chirp3(pcm_bytes, lang_code=stt_lang)
-    else:
-        stt_res = pipeline.transcribe_audio(
-            pcm_bytes,
-            sample_rate=16000,
-            lang_code=stt_lang,
-            model=model
-        )
-    raw_transcript = stt_res.get("transcript", "")
-    dlp_res = dlp_manager.sanitize_text(
-        text=raw_transcript,
-        enabled=req.use_dlp,
-        active_info_types=req.dlp_info_types
-    )
-    mt_res = pipeline.translate_text(
-        text=dlp_res["sanitized_text"],
-        source_lang=req.source_lang,
-        target_lang=req.target_lang,
+    selected_engine = (req.engine or req.stt_model or ENGINE_CHIRP3).lower()
+    state = SessionState(
+        cast_lang=resolve_language(req.cast_lang or req.source_lang) or "en",
+        guest_lang=resolve_language(req.guest_lang or req.target_lang) or "es",
+        smart_detect=req.smart_detect,
+        engine=selected_engine,
         use_glossary=req.use_glossary,
-        model=req.model
+        use_dlp=req.use_dlp,
+        dlp_info_types=req.dlp_info_types,
+        voice=req.voice or "Aoede",
     )
-    tts_lang_code = f"{req.target_lang}-US" if req.target_lang in ["en", "es"] else f"{req.target_lang}-{req.target_lang.upper()}"
-    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
-    
+
+    # Path A: Gemini 3.8 Live Speech-to-Speech Interpreter
+    if selected_engine == ENGINE_LIVE_38:
+        segments_out, pcm_parts = [], []
+        stt_ms = mt_ms = tts_ms = dlp_ms = 0.0
+        cur_pcm_bytes = 0
+        pause_bytes = b"\x00" * int(24000 * 2 * 0.35)
+        findings: List[Dict[str, Any]] = []
+        voice_used = f"{GEMINI_LIVE_MODEL} ({state.voice})"
+        for utterance in _split_pcm_utterances(pcm_bytes, max_window_s=35):
+            res38 = await translate_utterance_gemini38(utterance, state)
+            seg_stt_ms = round(float(res38.get("stt_ms", res38.get("latency_ms", 0.0))), 1)
+            seg_mt_ms = round(float(res38.get("translation_ms", res38.get("latency_ms", 0.0))), 1)
+            seg_tts_ms = round(float(res38.get("tts_ms", 0.0)), 1)
+            stt_ms += seg_stt_ms
+            mt_ms += seg_mt_ms
+            tts_ms += seg_tts_ms
+            inp_text = res38.get("transcript", "").strip()
+            out_text = res38.get("translated_text", "").strip()
+            raw_audio = res38.get("audio_pcm") or b""
+            if not inp_text and not out_text and not raw_audio:
+                continue
+            detected = res38.get("detected_lang")
+            if not detected and inp_text:
+                det = await asyncio.to_thread(pipeline.detect_language, inp_text)
+                detected = det.get("language_code")
+            apply_guest_detection(state, detected, inp_text)
+            role, src, tgt = route_turn(state, "ambient", detected)
+            src_info, tgt_info = lang_info(src), lang_info(tgt)
+
+            dlp_in = await asyncio.to_thread(
+                dlp_manager.sanitize_text, inp_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types
+            )
+            dlp_out = await asyncio.to_thread(
+                dlp_manager.sanitize_text, out_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types
+            )
+            seg_dlp_ms = round(float(dlp_in["latency_ms"] + dlp_out["latency_ms"]), 1)
+            dlp_ms += seg_dlp_ms
+            findings.extend(dlp_in["findings"] + dlp_out["findings"])
+            audio_start_s = round(cur_pcm_bytes / 48000.0, 2)
+            if raw_audio:
+                pcm_parts.append(raw_audio)
+                cur_pcm_bytes += len(raw_audio)
+                audio_end_s = round(cur_pcm_bytes / 48000.0, 2)
+                pcm_parts.append(pause_bytes)
+                cur_pcm_bytes += len(pause_bytes)
+            else:
+                audio_end_s = audio_start_s
+            seg_total_ms = round(max(seg_stt_ms, seg_mt_ms) + seg_tts_ms + seg_dlp_ms, 1)
+            segments_out.append({
+                "role": role,
+                "src_lang": src_info["key"],
+                "tgt_lang": tgt_info["key"],
+                "detected_lang": detected or src_info["stt"],
+                "transcript": inp_text,
+                "sanitized_transcript": dlp_in["sanitized_text"],
+                "dlp_applied": dlp_in["pii_detected"] or dlp_out["pii_detected"],
+                "dlp_scope": "transcript_only",
+                "translated_text": dlp_out["sanitized_text"],
+                "glossary_applied": bool(state.use_glossary),
+                "glossary_mode": "prompt" if state.use_glossary else "none",
+                "stt_ms": seg_stt_ms,
+                "dlp_ms": seg_dlp_ms,
+                "translation_ms": seg_mt_ms,
+                "tts_ms": seg_tts_ms,
+                "total_latency_ms": seg_total_ms,
+                "stt_model": GEMINI_LIVE_MODEL,
+                "model": GEMINI_LIVE_MODEL,
+                "voice": voice_used,
+                "engine": ENGINE_LIVE_38,
+                "audio_start_s": audio_start_s,
+                "audio_end_s": audio_end_s,
+            })
+
+        guest_info = lang_info(state.guest_lang)
+        return {
+            "engine": ENGINE_LIVE_38,
+            "segments": segments_out,
+            "cast_lang": state.cast_lang,
+            "guest_lang": state.guest_lang,
+            "detected_guest_lang": state.guest_lang if state.guest_detected else None,
+            "detected_guest_label": f"{guest_info['flag']} {guest_info['label']}" if state.guest_detected else None,
+            "stt": {
+                "transcript": "\n".join(s["transcript"] for s in segments_out),
+                "stt_model": GEMINI_LIVE_MODEL,
+                "detected_lang": state.guest_lang,
+                "latency_ms": round(stt_ms, 2),
+            },
+            "dlp": {
+                "sanitized_text": "\n".join(s["sanitized_transcript"] for s in segments_out),
+                "pii_detected": any(s["dlp_applied"] for s in segments_out),
+                "dlp_scope": "transcript_only",
+                "findings": findings,
+                "latency_ms": round(dlp_ms, 2),
+            },
+            "translation": {
+                "translated_text": "\n".join(s["translated_text"] for s in segments_out),
+                "glossary_applied": bool(state.use_glossary),
+                "glossary_mode": "prompt" if state.use_glossary else "none",
+                "model": GEMINI_LIVE_MODEL,
+                "latency_ms": round(mt_ms, 2),
+            },
+            "tts": {
+                "audio_base64": base64.b64encode(b"".join(pcm_parts)).decode("utf-8") if pcm_parts else "",
+                "sample_rate": 24000,
+                "voice": voice_used,
+                "latency_ms": round(tts_ms, 2),
+            },
+            "total_latency_ms": round(max(stt_ms, mt_ms) + tts_ms + dlp_ms, 2),
+        }
+
+    # Path B: Cascade engines (`chirp_3` or `gemini-3.5-transcribe`) -> DLP -> Translation v3 -> Chirp 3 HD TTS
+    cast_stt, guest_stt = lang_info(state.cast_lang)["stt"], lang_info(state.guest_lang)["stt"]
+    codes = ["auto"] if state.smart_detect else list(dict.fromkeys([cast_stt, guest_stt]))
+    use_gemini_stt = "gemini" in selected_engine
+
+    stt_ms, stt_model, raw_segments = 0.0, "chirp_3 (Speech v2)", []
+    windows = _split_pcm_utterances(pcm_bytes, max_window_s=45)
+    for window in windows:
+        if use_gemini_stt:
+            stt_res = await asyncio.to_thread(pipeline.transcribe_gemini35, window, None if state.smart_detect else codes)
+        else:
+            stt_res = await asyncio.to_thread(pipeline.transcribe_chirp3, window, codes)
+        win_stt_ms = float(stt_res.get("latency_ms", 0.0))
+        stt_ms += win_stt_ms
+        stt_model = stt_res.get("stt_model", stt_model)
+        segs = stt_res.get("segments") or (
+            [{"transcript": stt_res["transcript"], "language_code": stt_res.get("detected_lang")}] if stt_res.get("transcript") else []
+        )
+        total_chars = max(1, sum(len(s.get("transcript", "")) for s in segs))
+        for s in segs:
+            share = len(s.get("transcript", "")) / total_chars if len(segs) > 1 else 1.0
+            raw_segments.append({**s, "stt_ms": round(win_stt_ms * share, 1)})
+
+    # 2. Route each utterance with the cast member anchor; merge consecutive same-direction utterances
+    merged: List[Dict[str, Any]] = []
+    for seg in raw_segments:
+        detected = seg.get("language_code")
+        apply_guest_detection(state, detected, seg["transcript"])
+        role, src, tgt = route_turn(state, "ambient", detected)
+        if merged and merged[-1]["role"] == role and merged[-1]["src"] == src:
+            merged[-1]["transcript"] += " " + seg["transcript"]
+            merged[-1]["stt_ms"] = round(merged[-1].get("stt_ms", 0.0) + seg.get("stt_ms", 0.0), 1)
+        else:
+            merged.append({
+                "role": role,
+                "src": src,
+                "tgt": tgt,
+                "detected_lang": detected,
+                "transcript": seg["transcript"],
+                "stt_ms": round(seg.get("stt_ms", 0.0), 1),
+            })
+
+    # 3. DLP -> Translation -> TTS per segment
+    segments_out, pcm_parts = [], []
+    dlp_ms = mt_ms = tts_ms = 0.0
+    cur_pcm_bytes = 0
+    pause_bytes = b"\x00" * int(24000 * 2 * 0.35)
+    findings: List[Dict[str, Any]] = []
+    glossary_applied, voice_used, mt_model = False, None, None
+    engine_out = ENGINE_GEMINI_TRANSCRIBE if use_gemini_stt else ENGINE_CHIRP3
+    for seg in merged:
+        dlp_res = await asyncio.to_thread(
+            dlp_manager.sanitize_text, seg["transcript"], enabled=state.use_dlp, active_info_types=state.dlp_info_types
+        )
+        seg_dlp_ms = round(float(dlp_res["latency_ms"]), 1)
+        dlp_ms += seg_dlp_ms
+        findings.extend(dlp_res["findings"])
+        src_info, tgt_info = lang_info(seg["src"]), lang_info(seg["tgt"])
+        if same_language(seg["src"], seg["tgt"]):
+            mt_res = {"translated_text": dlp_res["sanitized_text"], "glossary_applied": False, "latency_ms": 0.0, "model": "passthrough"}
+        else:
+            mt_res = await asyncio.to_thread(
+                pipeline.translate_text, dlp_res["sanitized_text"], source_lang=src_info["mt"], target_lang=tgt_info["mt"],
+                use_glossary=state.use_glossary, model=req.model
+            )
+        seg_mt_ms = round(float(mt_res["latency_ms"]), 1)
+        mt_ms += seg_mt_ms
+        glossary_applied = glossary_applied or mt_res["glossary_applied"]
+        mt_model = mt_res["model"]
+        tts_res = await asyncio.to_thread(
+            pipeline.synthesize_speech, mt_res["translated_text"], target_lang=tgt_info["tts"], voice=state.voice
+        )
+        seg_tts_ms = round(float(tts_res["latency_ms"]), 1)
+        tts_ms += seg_tts_ms
+        voice_used = tts_res.get("voice")
+        raw_tts_pcm = base64.b64decode(tts_res["audio_base64"]) if tts_res.get("audio_base64") else b""
+        audio_start_s = round(cur_pcm_bytes / 48000.0, 2)
+        if raw_tts_pcm:
+            pcm_parts.append(raw_tts_pcm)
+            cur_pcm_bytes += len(raw_tts_pcm)
+            audio_end_s = round(cur_pcm_bytes / 48000.0, 2)
+            pcm_parts.append(pause_bytes)
+            cur_pcm_bytes += len(pause_bytes)
+        else:
+            audio_end_s = audio_start_s
+        seg_stt_ms = round(float(seg.get("stt_ms", 0.0)), 1)
+        seg_total_ms = round(seg_stt_ms + seg_dlp_ms + seg_mt_ms + seg_tts_ms, 1)
+        segments_out.append({
+            "role": seg["role"],
+            "src_lang": src_info["key"],
+            "tgt_lang": tgt_info["key"],
+            "detected_lang": seg["detected_lang"],
+            "transcript": seg["transcript"],
+            "sanitized_transcript": dlp_res["sanitized_text"],
+            "dlp_applied": dlp_res["pii_detected"],
+            "dlp_scope": "full",
+            "translated_text": mt_res["translated_text"],
+            "glossary_applied": mt_res["glossary_applied"],
+            "glossary_mode": "translation_v3" if mt_res["glossary_applied"] else "none",
+            "stt_ms": seg_stt_ms,
+            "dlp_ms": seg_dlp_ms,
+            "translation_ms": seg_mt_ms,
+            "tts_ms": seg_tts_ms,
+            "total_latency_ms": seg_total_ms,
+            "stt_model": stt_model,
+            "model": mt_model,
+            "voice": voice_used,
+            "engine": engine_out,
+            "audio_start_s": audio_start_s,
+            "audio_end_s": audio_end_s,
+        })
+
+    guest_info = lang_info(state.guest_lang)
     return {
-        "stt": stt_res,
-        "dlp": dlp_res,
-        "translation": mt_res,
-        "tts": tts_res,
-        "total_latency_ms": round(stt_res["latency_ms"] + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
+        "engine": ENGINE_GEMINI_TRANSCRIBE if use_gemini_stt else ENGINE_CHIRP3,
+        "segments": segments_out,
+        "cast_lang": state.cast_lang,
+        "guest_lang": state.guest_lang,
+        "detected_guest_lang": state.guest_lang if state.guest_detected else None,
+        "detected_guest_label": f"{guest_info['flag']} {guest_info['label']}" if state.guest_detected else None,
+        "stt": {
+            "transcript": "\n".join(s["transcript"] for s in segments_out),
+            "stt_model": stt_model,
+            "detected_lang": state.guest_lang,
+            "latency_ms": round(stt_ms, 2),
+        },
+        "dlp": {
+            "sanitized_text": "\n".join(s["sanitized_transcript"] for s in segments_out),
+            "pii_detected": any(s["dlp_applied"] for s in segments_out),
+            "dlp_scope": "full",
+            "findings": findings,
+            "latency_ms": round(dlp_ms, 2),
+        },
+        "translation": {
+            "translated_text": "\n".join(s["translated_text"] for s in segments_out),
+            "glossary_applied": glossary_applied,
+            "model": mt_model,
+            "latency_ms": round(mt_ms, 2),
+        },
+        "tts": {
+            "audio_base64": base64.b64encode(b"".join(pcm_parts)).decode("utf-8") if pcm_parts else "",
+            "sample_rate": 24000,
+            "voice": voice_used,
+            "latency_ms": round(tts_ms, 2),
+        },
+        "total_latency_ms": round(stt_ms + dlp_ms + mt_ms + tts_ms, 2),
     }
+
 
 @app.post("/api/upload-audio")
 async def upload_audio(
@@ -624,14 +539,36 @@ async def upload_audio(
     source_lang: str = Form("en"),
     target_lang: str = Form("es"),
     use_glossary: bool = Form(True),
-    use_dlp: bool = Form(True)
+    use_dlp: bool = Form(True),
+    stt_model: str = Form("chirp_3"),
 ):
     pcm_bytes = await file.read()
-    stt_res = pipeline.transcribe_audio(
-        pcm_bytes,
-        sample_rate=16000,
-        lang_code=f"{source_lang}-US" if source_lang in ["en", "es"] else f"{source_lang}-{source_lang.upper()}"
-    )
+    src_info, tgt_info = lang_info(source_lang), lang_info(target_lang)
+    if stt_model and stt_model.lower() == ENGINE_LIVE_38:
+        state = SessionState(
+            cast_lang=src_info["key"], guest_lang=tgt_info["key"], smart_detect=False,
+            engine=ENGINE_LIVE_38, use_glossary=use_glossary, use_dlp=use_dlp,
+        )
+        res38 = await translate_utterance_gemini38(pcm_bytes, state)
+        dlp_res = dlp_manager.sanitize_text(text=res38.get("transcript", ""), enabled=use_dlp)
+        dlp_out = dlp_manager.sanitize_text(text=res38.get("translated_text", ""), enabled=use_dlp)
+        return {
+            "stt": {"transcript": res38.get("transcript", ""), "stt_model": GEMINI_LIVE_MODEL,
+                    "detected_lang": res38.get("detected_lang") or src_info["stt"],
+                    "latency_ms": res38.get("stt_ms", res38["latency_ms"])},
+            "dlp": dlp_res,
+            "translation": {"translated_text": dlp_out["sanitized_text"], "glossary_applied": use_glossary,
+                            "model": GEMINI_LIVE_MODEL,
+                            "latency_ms": res38.get("translation_ms", res38["latency_ms"])},
+            "tts": {"audio_base64": base64.b64encode(res38.get("audio_pcm", b"")).decode("utf-8"),
+                    "sample_rate": 24000, "voice": res38.get("voice"),
+                    "latency_ms": res38.get("tts_ms", 0.0)},
+            "total_latency_ms": round(res38["latency_ms"] + dlp_res["latency_ms"] + dlp_out["latency_ms"], 2),
+        }
+    if stt_model and "gemini" in stt_model.lower():
+        stt_res = await asyncio.to_thread(pipeline.transcribe_gemini35, pcm_bytes, [src_info["stt"]])
+    else:
+        stt_res = await asyncio.to_thread(pipeline.transcribe_chirp3, pcm_bytes, src_info["stt"])
     raw_transcript = stt_res.get("transcript", "")
     dlp_res = dlp_manager.sanitize_text(
         text=raw_transcript,
@@ -639,12 +576,11 @@ async def upload_audio(
     )
     mt_res = pipeline.translate_text(
         text=dlp_res["sanitized_text"],
-        source_lang=source_lang,
-        target_lang=target_lang,
+        source_lang=src_info["mt"],
+        target_lang=tgt_info["mt"],
         use_glossary=use_glossary
     )
-    tts_lang_code = f"{target_lang}-US" if target_lang in ["en", "es"] else f"{target_lang}-{target_lang.upper()}"
-    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
+    tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tgt_info["tts"])
     
     return {
         "stt": stt_res,
@@ -653,6 +589,7 @@ async def upload_audio(
         "tts": tts_res,
         "total_latency_ms": round(stt_res["latency_ms"] + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
     }
+
 
 @app.post("/api/glossary/sync")
 def sync_glossary(csv_path: Optional[str] = None):
@@ -675,258 +612,129 @@ def sync_glossary(csv_path: Optional[str] = None):
         "glossary_name": result.name if hasattr(result, "name") else str(result)
     }
 
+
 @app.websocket("/ws/stream-translate")
 async def websocket_endpoint(websocket: WebSocket):
+    """Bidirectional live translation stream.
+
+    Client messages:
+      config             {castLang, guestLang, smartDetect, engine, voice, useGlossary, useDlp, dlpInfoTypes}
+      audio_stream_start {speakerRole: cast-member|guest|ambient, turnId, ...config fields}
+      audio_chunk        {pcm: base64 16kHz 16-bit mono}
+      audio_stream_end   {}
+      audio              {pcm, speakerRole}  one-shot utterance (Chirp 3 Recognize)
+      text               {text, speakerRole}
+    """
     await websocket.accept()
     print("[PipelineWS] Client connected", flush=True)
-    active_stream_worker = None
+    state = SessionState()
+    active_worker: Optional[BaseStreamWorker] = None
+    background: set = set()
+    turn_counter = 0
+
+    def track(coro):
+        task = asyncio.create_task(coro)
+        background.add(task)
+        task.add_done_callback(background.discard)
+        return task
+
+    def next_turn_id(data: Dict[str, Any]) -> str:
+        nonlocal turn_counter
+        turn_counter += 1
+        return str(data.get("turnId") or f"t{turn_counter}")
+
+    async def finish(worker: BaseStreamWorker):
+        await worker.stop()
+        await safe_send(websocket, {"type": "turn_complete", "turnId": worker.turn_id})
+
+    def state_payload() -> Dict[str, Any]:
+        return {"castLang": state.cast_lang, "guestLang": state.guest_lang,
+                "smartDetect": state.smart_detect, "engine": state.engine}
 
     try:
+        await websocket.send_json({"type": "ready", **state_payload()})
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
-            src = data.get("sourceLang", "en")
-            tgt = data.get("targetLang", "es")
-            use_glossary = data.get("useGlossary", True)
-            speaker_role = data.get("speakerRole", "cast-member")
-            use_dlp = data.get("useDlp", True)
-            dlp_info_types = data.get("dlpInfoTypes", None)
-
+            prev_stream_cfg = (state.engine.lower(), state.cast_lang, state.guest_lang, state.smart_detect, state.voice)
             if msg_type != "audio_chunk":
-                print(f"[PipelineWS] Msg: {msg_type}, speaker={speaker_role}, src={src}, tgt={tgt}, dlp={use_dlp}", flush=True)
+                state.update_from_message(data)
+                print(f"[PipelineWS] Msg: {msg_type}, role={data.get('speakerRole')}, cast={state.cast_lang}, "
+                      f"guest={state.guest_lang}, smart={state.smart_detect}, engine={state.engine}", flush=True)
+            new_stream_cfg = (state.engine.lower(), state.cast_lang, state.guest_lang, state.smart_detect, state.voice)
+            speaker_role = data.get("speakerRole", "cast-member")
 
-            if msg_type == "audio_stream_start":
-                if active_stream_worker:
-                    await active_stream_worker.stop()
-                active_stream_worker = create_stream_worker(
-                    websocket=websocket,
-                    src=src,
-                    tgt=tgt,
-                    speaker_role=speaker_role,
-                    use_glossary=use_glossary,
-                    use_dlp=use_dlp,
-                    dlp_info_types=dlp_info_types
-                )
-                active_stream_worker.start()
-                await websocket.send_json({"type": "stream_started"})
+            if msg_type == "config":
+                if active_worker is not None and not active_worker.is_ptt and new_stream_cfg != prev_stream_cfg:
+                    old_worker = active_worker
+                    active_worker = None
+                    track(finish(old_worker))
+                    turn_id = next_turn_id(data)
+                    worker = create_stream_worker(websocket, state, "ambient", turn_id)
+                    if worker is not None:
+                        active_worker = worker
+                        worker.start()
+                        await websocket.send_json({
+                            "type": "stream_started",
+                            "turnId": turn_id,
+                            "speakerRole": "ambient",
+                            "hotSwapped": True,
+                            **state_payload(),
+                        })
+                await websocket.send_json({"type": "config_ack", **state_payload()})
+
+            elif msg_type == "audio_stream_start":
+                if active_worker:
+                    track(finish(active_worker))
+                    active_worker = None
+                turn_id = next_turn_id(data)
+                worker = create_stream_worker(websocket, state, speaker_role, turn_id)
+                if worker is None:
+                    await websocket.send_json({
+                        "type": "error", "turnId": turn_id,
+                        "message": "Gemini 3.5 Live Translate supports push-to-talk only. Use the Cast / Guest buttons or pick another engine for continuous mode."
+                    })
+                    continue
+                active_worker = worker
+                worker.start()
+                await websocket.send_json({"type": "stream_started", "turnId": turn_id, "speakerRole": speaker_role, **state_payload()})
 
             elif msg_type == "audio_chunk" and "pcm" in data:
-                pcm_bytes = base64.b64decode(data["pcm"])
-                if not active_stream_worker or not active_stream_worker.is_running:
-                    active_stream_worker = create_stream_worker(
-                        websocket=websocket,
-                        src=src,
-                        tgt=tgt,
-                        speaker_role=speaker_role,
-                        use_glossary=use_glossary,
-                        use_dlp=use_dlp,
-                        dlp_info_types=dlp_info_types
-                    )
-                    active_stream_worker.start()
-                await active_stream_worker.push_audio(pcm_bytes)
+                if not active_worker:
+                    chunk_role = data.get("speakerRole", "ambient")
+                    active_worker = create_stream_worker(websocket, state, chunk_role, next_turn_id(data))
+                    if active_worker is None:
+                        continue
+                    active_worker.start()
+                await active_worker.push_audio(base64.b64decode(data["pcm"]))
 
             elif msg_type == "audio_stream_end":
-                if active_stream_worker:
-                    await active_stream_worker.stop()
-                    active_stream_worker = None
-                await websocket.send_json({"type": "turn_complete"})
+                if active_worker:
+                    track(finish(active_worker))
+                    active_worker = None
+                else:
+                    await websocket.send_json({"type": "turn_complete"})
 
             elif msg_type == "audio" and "pcm" in data:
-                pcm_bytes = base64.b64decode(data["pcm"])
-                
-                # Determine language config based on speaker role
-                if speaker_role == "guest":
-                    stt_lang = resolve_locale(tgt)
-                    src_lang = tgt.split("-")[0].lower()
-                    tgt_lang = src.split("-")[0].lower()
-                    alt_langs = None
-                elif speaker_role == "ambient":
-                    stt_lang = "en-US"
-                    target_stt = resolve_locale(tgt)
-                    alt_langs = [target_stt]
-                    src_lang = src.split("-")[0].lower()
-                    tgt_lang = tgt.split("-")[0].lower()
-                else: # Cast Member
-                    stt_lang = resolve_locale(src)
-                    src_lang = src.split("-")[0].lower()
-                    tgt_lang = tgt.split("-")[0].lower()
-                    alt_langs = None
+                track(process_batch_audio_turn(websocket, state, base64.b64decode(data["pcm"]), speaker_role, next_turn_id(data)))
 
-                req_model = data.get("sttModel") or os.getenv("STT_MODEL", "chirp_3")
-                # 1. Real-time STT with Chirp 3 or latest_short
-                if req_model in ["chirp_3", "chirp_2", "chirp"] and not alt_langs:
-                    stt_res = pipeline.transcribe_chirp3(pcm_bytes, lang_code=stt_lang)
-                else:
-                    stt_res = pipeline.transcribe_audio(pcm_bytes, sample_rate=16000, lang_code=stt_lang, alternative_lang_codes=alt_langs)
-                
-                # If ambient continuous mode, adapt direction dynamically
-                if speaker_role == "ambient":
-                    detected = stt_res.get("detected_lang", "en-US")
-                    if detected.lower().startswith(tgt.lower()):
-                        src_lang = tgt
-                        tgt_lang = src
-                        effective_role = "guest"
-                    else:
-                        src_lang = src
-                        tgt_lang = tgt
-                        effective_role = "cast-member"
-                else:
-                    effective_role = speaker_role
+            elif msg_type == "text" and data.get("text"):
+                track(process_text_turn(websocket, state, data["text"], speaker_role, next_turn_id(data)))
 
-                if not stt_res["transcript"]:
-                    await websocket.send_json({"type": "no_speech", "message": "No audible speech detected"})
-                    continue
-
-                # 2. Cloud DLP Sanitization
-                dlp_res = dlp_manager.sanitize_text(
-                    stt_res["transcript"],
-                    enabled=use_dlp,
-                    active_info_types=dlp_info_types
-                )
-                sanitized_transcript = dlp_res["sanitized_text"]
-
-                # Push STT transcript to client
-                await websocket.send_json({
-                    "type": "stt_transcript",
-                    "transcript": stt_res["transcript"],
-                    "sanitized_transcript": sanitized_transcript,
-                    "dlp_applied": dlp_res["pii_detected"],
-                    "confidence": stt_res["confidence"],
-                    "stt_ms": stt_res["latency_ms"],
-                    "stt_model": stt_res.get("stt_model", "chirp_3 (GA Speech Generation)"),
-                    "speakerRole": effective_role,
-                    "detectedLang": stt_res.get("detected_lang")
-                })
-
-                # Push DLP status event
-                await websocket.send_json({
-                    "type": "dlp_status",
-                    "original_text": stt_res["transcript"],
-                    "sanitized_text": sanitized_transcript,
-                    "pii_detected": dlp_res["pii_detected"],
-                    "findings": dlp_res["findings"],
-                    "active_info_types": dlp_res["active_info_types"],
-                    "dlp_latency_ms": dlp_res["latency_ms"],
-                    "dlp_enabled": use_dlp,
-                    "speakerRole": effective_role
-                })
-
-                # 3. Real-time Translation with Translation LLM (on sanitized text)
-                mt_res = pipeline.translate_text(
-                    sanitized_transcript,
-                    source_lang=src_lang,
-                    target_lang=tgt_lang,
-                    use_glossary=use_glossary
-                )
-
-                # Push Translation text immediately
-                await websocket.send_json({
-                    "type": "translation_text",
-                    "translated_text": mt_res["translated_text"],
-                    "glossary_applied": mt_res["glossary_applied"],
-                    "translation_ms": mt_res["latency_ms"],
-                    "model": mt_res["model"],
-                    "speakerRole": effective_role
-                })
-
-                # 4. High Fidelity Speech Synthesis
-                active_target = tgt if effective_role in ["cast-member", "ambient"] else src
-                tts_lang_code = resolve_locale(active_target)
-                tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
-                
-                total_latency = round(stt_res["latency_ms"] + dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
-                
-                # Push audio stream for instant playback
-                await websocket.send_json({
-                    "type": "audio",
-                    "pcm": tts_res["audio_base64"],
-                    "sampleRate": 24000,
-                    "total_latency_ms": total_latency,
-                    "latency_breakdown": {
-                        "stt_ms": stt_res["latency_ms"],
-                        "dlp_ms": dlp_res["latency_ms"],
-                        "translation_ms": mt_res["latency_ms"],
-                        "tts_ms": tts_res["latency_ms"]
-                    },
-                    "speakerRole": effective_role
-                })
-
-            elif data.get("type") == "text" and "text" in data:
-                text_input = data["text"]
-                
-                # 1. Cloud DLP Sanitization
-                dlp_res = dlp_manager.sanitize_text(
-                    text_input,
-                    enabled=use_dlp,
-                    active_info_types=dlp_info_types
-                )
-                sanitized_text = dlp_res["sanitized_text"]
-
-                # Send immediate STT confirmation
-                await websocket.send_json({
-                    "type": "stt_transcript",
-                    "transcript": text_input,
-                    "sanitized_transcript": sanitized_text,
-                    "dlp_applied": dlp_res["pii_detected"],
-                    "confidence": 1.0,
-                    "stt_ms": 0.0,
-                    "speakerRole": speaker_role
-                })
-
-                # Send DLP status event
-                await websocket.send_json({
-                    "type": "dlp_status",
-                    "original_text": text_input,
-                    "sanitized_text": sanitized_text,
-                    "pii_detected": dlp_res["pii_detected"],
-                    "findings": dlp_res["findings"],
-                    "active_info_types": dlp_res["active_info_types"],
-                    "dlp_latency_ms": dlp_res["latency_ms"],
-                    "dlp_enabled": use_dlp,
-                    "speakerRole": speaker_role
-                })
-
-                # 2. Translation on sanitized text
-                mt_res = pipeline.translate_text(
-                    sanitized_text,
-                    source_lang=src,
-                    target_lang=tgt,
-                    use_glossary=use_glossary
-                )
-
-                await websocket.send_json({
-                    "type": "translation_text",
-                    "translated_text": mt_res["translated_text"],
-                    "glossary_applied": mt_res["glossary_applied"],
-                    "translation_ms": mt_res["latency_ms"],
-                    "model": mt_res["model"],
-                    "speakerRole": speaker_role
-                })
-
-                # 3. TTS
-                tts_lang_code = f"{tgt}-US" if tgt == "es" else f"{tgt}-{tgt.upper()}"
-                tts_res = pipeline.synthesize_speech(mt_res["translated_text"], target_lang=tts_lang_code)
-
-                total_latency = round(dlp_res["latency_ms"] + mt_res["latency_ms"] + tts_res["latency_ms"], 2)
-
-                await websocket.send_json({
-                    "type": "audio",
-                    "pcm": tts_res["audio_base64"],
-                    "sampleRate": 24000,
-                    "total_latency_ms": total_latency,
-                    "latency_breakdown": {
-                        "stt_ms": 0.0,
-                        "dlp_ms": dlp_res["latency_ms"],
-                        "translation_ms": mt_res["latency_ms"],
-                        "tts_ms": tts_res["latency_ms"]
-                    },
-                    "speakerRole": speaker_role
-                })
     except WebSocketDisconnect:
         print("[PipelineWS] Client disconnected", flush=True)
     except Exception as e:
         print(f"[PipelineWS] Error: {e}", flush=True)
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+    finally:
+        if active_worker:
+            active_worker.cancel()
+        for task in list(background):
+            task.cancel()
+
 
 if __name__ == "__main__":
     import uvicorn

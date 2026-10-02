@@ -40,7 +40,11 @@ app.get('/api/conversations', (req, res) => {
           mode: data.mode || 'live',
           createdAt: data.createdAt || fs.statSync(filePath).mtime.toISOString(),
           turnCount: data.turns ? data.turns.length : 0,
-          hasAudio: Boolean(data.audioBase64 || (data.turns && data.turns.some(t => t.audioBase64)))
+          hasAudio: Boolean(
+            data.audioBase64 ||
+            (data.turns && data.turns.some(t => t.audioBase64)) ||
+            (data.metadata && Array.isArray(data.metadata.synthesizedPcmChunks) && data.metadata.synthesizedPcmChunks.length > 0)
+          )
         });
       } catch (err) {
         console.error('Error reading conversation file:', f, err);
@@ -115,17 +119,62 @@ app.delete('/api/conversations/:id', (req, res) => {
   }
 });
 
+// Cached Cloud Run metadata identity token for service-to-service calls when allUsers is restricted
+let _cachedIdToken = null;
+let _cachedIdTokenExpiry = 0;
+
+async function getPipelineHeaders(pipelineHost, extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  if (!pipelineHost.startsWith('https://')) {
+    return headers;
+  }
+  const now = Date.now();
+  if (_cachedIdToken && now < _cachedIdTokenExpiry) {
+    headers['Authorization'] = `Bearer ${_cachedIdToken}`;
+    return headers;
+  }
+  try {
+    const metaUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(pipelineHost)}`;
+    const metaRes = await fetch(metaUrl, {
+      headers: { 'Metadata-Flavor': 'Google' },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (metaRes.ok) {
+      const token = (await metaRes.text()).trim();
+      if (token) {
+        _cachedIdToken = token;
+        _cachedIdTokenExpiry = now + 45 * 60 * 1000;
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+  } catch (_) {
+    // Not running on Cloud Run / GCE metadata environment
+  }
+  return headers;
+}
+
 // Proxy route for audio translation (recorded upload)
 app.post('/api/translate-audio-proxy', async (req, res) => {
   try {
     const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const headers = await getPipelineHeaders(pipelineHost, { 'Content-Type': 'application/json' });
     const fetchRes = await fetch(`${pipelineHost}/api/translate-audio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(req.body),
-      signal: AbortSignal.timeout(60000)
+      // Long recordings are processed utterance-by-utterance (STT -> DLP -> MT -> TTS)
+      signal: AbortSignal.timeout(Number(process.env.TRANSLATE_AUDIO_TIMEOUT_MS || 300000))
     });
-    const data = await fetchRes.json();
+    const text = await fetchRes.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      return res.status(fetchRes.status || 502).json({
+        error: 'Translation pipeline returned non-JSON response',
+        message: text.slice(0, 240)
+      });
+    }
     return res.status(fetchRes.status).json(data);
   } catch (err) {
     console.error('Error proxying audio translation:', err);
@@ -133,10 +182,9 @@ app.post('/api/translate-audio-proxy', async (req, res) => {
   }
 });
 
-// Config endpoint exposing proxy URLs
+// Config endpoint exposing pipeline URLs
 app.get('/config.json', (req, res) => {
   res.json({
-    geminiLiveProxyUrl: process.env.GEMINI_LIVE_PROXY_URL || 'ws://localhost:8080/live-translate',
     translationPipelineUrl: TRANSLATION_PIPELINE_URL,
     translationPipelineWsUrl: process.env.TRANSLATION_PIPELINE_WS_URL || 'ws://localhost:8081/ws/stream-translate',
   });
@@ -394,7 +442,8 @@ const DEFAULT_DLP_CATALOG = [
 app.get('/api/dlp/catalog', async (req, res) => {
   try {
     const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
-    const fetchRes = await fetch(`${pipelineHost}/api/dlp/catalog`, { signal: AbortSignal.timeout(2000) });
+    const headers = await getPipelineHeaders(pipelineHost);
+    const fetchRes = await fetch(`${pipelineHost}/api/dlp/catalog`, { headers, signal: AbortSignal.timeout(2500) });
     if (fetchRes.ok) {
       const data = await fetchRes.json();
       return res.json(data);
@@ -409,9 +458,10 @@ app.get('/api/dlp/catalog', async (req, res) => {
 app.post('/api/dlp/sanitize', async (req, res) => {
   try {
     const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const headers = await getPipelineHeaders(pipelineHost, { 'Content-Type': 'application/json' });
     const fetchRes = await fetch(`${pipelineHost}/api/dlp/sanitize`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(req.body),
       signal: AbortSignal.timeout(3500)
     });

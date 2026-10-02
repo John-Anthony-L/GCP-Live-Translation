@@ -11,11 +11,7 @@ let playbackContext = null;
 let currentMessageBubble = null;
 let lastSpeechStartTimestamp = 0;
 let glossaryData = [];
-let recordedChunks = [];
-let vadSpeaking = false;
-let vadSilenceStart = 0;
-const VAD_ENERGY_THRESHOLD = 0.0035; // Sensitive voice activity threshold
-const VAD_SILENCE_TIMEOUT_MS = 800; // 800ms silence automatically dispatches speech turn
+// Utterance boundaries come from server-side endpointing (Chirp 3 / Gemini), not client VAD.
 
 // Conversation History & Audio Persistence State
 let liveConversationTurns = [];
@@ -41,9 +37,50 @@ let activeDlpInfoTypes = new Set([
 const connectionStatus = document.getElementById('connectionStatus');
 const statusLabel = connectionStatus.querySelector('.status-label');
 const tabButtons = document.querySelectorAll('.tab-btn');
-const langPairSelect = document.getElementById('langPair');
-const sttModelSelect = document.getElementById('sttModelSelect');
+// Language catalog (mirrors services/translation-pipeline/languages.py)
+const LANGUAGE_CATALOG = {
+  en:      { label: 'English (US)',        flag: '🇺🇸' },
+  es:      { label: 'Spanish (LatAm/US)',  flag: '🇲🇽' },
+  'es-ES': { label: 'Spanish (Spain)',     flag: '🇪🇸' },
+  pt:      { label: 'Portuguese (Brazil)', flag: '🇧🇷' },
+  fr:      { label: 'French',              flag: '🇫🇷' },
+  de:      { label: 'German',              flag: '🇩🇪' },
+  it:      { label: 'Italian',             flag: '🇮🇹' },
+  ja:      { label: 'Japanese',            flag: '🇯🇵' },
+  ko:      { label: 'Korean',              flag: '🇰🇷' },
+  zh:      { label: 'Chinese (Mandarin)',  flag: '🇨🇳' }
+};
+const ENGINE_INFO = {
+  'chirp_3': { label: 'Chirp 3 (Speech v2)', speechToSpeech: false, pttOnly: false,
+    note: 'Cloud DLP redacts text before translation and speech.' },
+  'gemini-3.5-transcribe': { label: 'Gemini 3.5 Transcribe', speechToSpeech: false, pttOnly: false,
+    note: 'Gemini 3.5 Live transcribes; Cloud DLP redacts before Translation v3 and Chirp 3 HD TTS.' },
+  'gemini-3.5-live-translate': { label: 'Gemini 3.5 Live Translate', speechToSpeech: true, pttOnly: true,
+    note: 'Speech-to-speech, push-to-talk only. DLP applies to transcripts only; brand glossary is not supported.' },
+  'gemini-3.8-live': { label: 'Gemini 3.8 Live', speechToSpeech: true, pttOnly: false,
+    note: 'Speech-to-speech interpreter. DLP applies to transcripts only; glossary is applied via the system prompt.' }
+};
+
+function langMeta(code) {
+  if (!code) return { label: 'Unknown', flag: '🌐' };
+  return LANGUAGE_CATALOG[code] || { label: code, flag: '🌐' };
+}
+
+const castLangSelect = document.getElementById('castLangSelect');
+const guestLangSelect = document.getElementById('guestLangSelect');
+const smartDetectToggle = document.getElementById('smartDetectToggle');
+const smartDetectHint = document.getElementById('smartDetectHint');
+const guestLangHint = document.getElementById('guestLangHint');
+const detectedGuestBadge = document.getElementById('detectedGuestBadge');
+const engineSelect = document.getElementById('engineSelect');
+const engineNote = document.getElementById('engineNote');
+const castSpeakerLabel = document.getElementById('castSpeakerLabel');
 const sttModelSub = document.getElementById('sttModelSub');
+
+// Per-turn bubble tracking (server echoes turnId on every event)
+const bubblesByTurn = new Map();
+let turnCounter = 0;
+let activeStreamTurnId = null;
 const personaVoiceSelect = document.getElementById('personaVoice');
 const continuousStreamToggle = document.getElementById('continuousStreamToggle');
 const streamModeHint = document.getElementById('streamModeHint');
@@ -117,8 +154,12 @@ function addTerminalLog(msg, type = '') {
 
 // Initialize
 async function init() {
+  populateLanguageSelects();
   setupTabs();
   setupControls();
+  updateEngineUI();
+  updateSmartDetectUI();
+  updateLanguageLabels();
   setupRecordedUpload();
   setupPastConversations();
   await setupDLP();
@@ -185,23 +226,45 @@ function setupControls() {
     }
   });
 
-  langPairSelect.addEventListener('change', () => {
+  castLangSelect.addEventListener('change', () => {
+    if (castLangSelect.value === guestLangSelect.value) {
+      // Keep the pair distinct: swap the guest to the previous cast language
+      guestLangSelect.value = castLangSelect.dataset.prev || (castLangSelect.value === 'en' ? 'es' : 'en');
+    }
+    castLangSelect.dataset.prev = castLangSelect.value;
+    resetDetectedGuest();
     updateLanguageLabels();
-    reconnectWebSocket();
+    sendSessionConfig();
   });
 
-  if (sttModelSelect) {
-    sttModelSelect.addEventListener('change', () => {
-      const model = sttModelSelect.value;
-      const modelText = sttModelSelect.options[sttModelSelect.selectedIndex].text;
-      if (sttModelSub) sttModelSub.innerText = model;
-      if (terminalSttMeta) terminalSttMeta.innerText = model;
-      addTerminalLog(`STT Engine changed to: ${modelText}`, 'system');
-    });
-  }
+  guestLangSelect.addEventListener('change', () => {
+    resetDetectedGuest();
+    updateLanguageLabels();
+    sendSessionConfig();
+  });
+
+  smartDetectToggle.addEventListener('change', () => {
+    resetDetectedGuest();
+    updateSmartDetectUI();
+    updateLanguageLabels();
+    sendSessionConfig();
+  });
+
+  engineSelect.addEventListener('change', () => {
+    updateEngineUI();
+    const info = ENGINE_INFO[engineSelect.value];
+    if (info && info.pttOnly && isContinuous) {
+      stopContinuousStream();
+      addSystemNote(`${info.label} supports Push-to-Talk only — switched from Continuous 2-Way Stream to Push-to-Talk.`);
+    } else if (isContinuous && info) {
+      streamModeHint.innerText = `🔴 Continuous 2-Way Stream (${info.label})`;
+    }
+    addTerminalLog(`Translation engine changed to: ${info ? info.label : engineSelect.value}`, 'system');
+    sendSessionConfig();
+  });
 
   personaVoiceSelect.addEventListener('change', () => {
-    reconnectWebSocket();
+    sendSessionConfig();
   });
 
   clearChatBtn.addEventListener('click', () => {
@@ -212,6 +275,7 @@ function setupControls() {
       </div>
     `;
     currentMessageBubble = null;
+    bubblesByTurn.clear();
     liveConversationTurns = [];
     liveSynthesizedPcmChunks = [];
   });
@@ -393,6 +457,7 @@ function renderDlpRules() {
 }
 
 function updateDlpUI() {
+  sendSessionConfig();
   const activeCount = dlpMasterEnabled ? activeDlpInfoTypes.size : 0;
   const totalCount = dlpCatalog.length;
 
@@ -522,7 +587,162 @@ function renderSandboxResult(data) {
   }
 }
 
+// ----------------------------------------------------
+// Languages, engine & session config
+// ----------------------------------------------------
+let detectedGuestLang = null; // set by Smart Guest Language Detection (sticky until reset)
+
+function populateLanguageSelects() {
+  document.querySelectorAll('select.lang-select').forEach(sel => {
+    const def = sel.dataset.default || 'en';
+    sel.innerHTML = Object.entries(LANGUAGE_CATALOG)
+      .map(([key, meta]) => `<option value="${key}">${meta.flag} ${meta.label}</option>`)
+      .join('');
+    sel.value = def;
+    sel.dataset.prev = def;
+  });
+}
+
+function getCastLang() {
+  return castLangSelect.value || 'en';
+}
+
+function getGuestLang() {
+  return detectedGuestLang || guestLangSelect.value || 'es';
+}
+
+function getLangPair() {
+  return [getCastLang(), getGuestLang()];
+}
+
+function getSessionConfig() {
+  return {
+    castLang: getCastLang(),
+    guestLang: getGuestLang(),
+    smartDetect: smartDetectToggle.checked,
+    engine: engineSelect.value,
+    voice: personaVoiceSelect.value,
+    useGlossary: true,
+    useDlp: dlpMasterEnabled,
+    dlpInfoTypes: Array.from(activeDlpInfoTypes)
+  };
+}
+
+function sendSessionConfig() {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'config', ...getSessionConfig() }));
+  }
+}
+
+// Per-turn settings. Languages are deliberately omitted: they only change through explicit
+// 'config' messages, so a turn cannot overwrite a guest language the server just detected.
+function getTurnConfig() {
+  const { castLang, guestLang, ...rest } = getSessionConfig();
+  return rest;
+}
+
+function resetDetectedGuest() {
+  detectedGuestLang = null;
+  if (detectedGuestBadge) {
+    detectedGuestBadge.style.display = 'none';
+    detectedGuestBadge.innerText = '';
+  }
+}
+
+function showDetectedGuest(evt) {
+  if (!evt || !evt.lang) return;
+  if (!smartDetectToggle.checked) return;
+  detectedGuestLang = evt.lang;
+  const meta = langMeta(evt.lang);
+  if (detectedGuestBadge) {
+    detectedGuestBadge.innerText = `Detected: ${evt.flag || meta.flag} ${evt.label || meta.label}`;
+    detectedGuestBadge.style.display = 'inline-flex';
+  }
+  updateLanguageLabels();
+  if (evt.changed) {
+    addTerminalLog(`Smart Detection: guest language set to ${evt.label || meta.label} (${evt.raw || evt.lang}). Cast replies will be translated into it.`, 'system');
+  }
+}
+
+function currentEngineInfo() {
+  return ENGINE_INFO[engineSelect.value] || ENGINE_INFO['chirp_3'];
+}
+
+function updateEngineUI() {
+  const info = currentEngineInfo();
+  if (engineNote) engineNote.innerText = info.note;
+  if (sttModelSub) sttModelSub.innerText = info.speechToSpeech ? `${info.label} (input STT)` : info.label;
+  if (terminalSttMeta) terminalSttMeta.innerText = info.label;
+  const transModelSub = document.getElementById('transModelSub');
+  const ttsVoiceSub = document.getElementById('ttsVoiceSub');
+  if (transModelSub) transModelSub.innerText = info.speechToSpeech ? `${info.label} (first audio)` : 'Cloud Translation v3';
+  if (ttsVoiceSub) ttsVoiceSub.innerText = info.speechToSpeech ? `${info.label} native audio` : 'Chirp 3 HD Voice';
+
+  // 3.5 Live Translate is push-to-talk only
+  if (continuousStreamToggle) {
+    continuousStreamToggle.disabled = !!info.pttOnly;
+    const toggleLabel = continuousStreamToggle.closest('.toggle-label');
+    if (toggleLabel) toggleLabel.classList.toggle('disabled', !!info.pttOnly);
+  }
+  if (streamModeHint && !isContinuous) {
+    streamModeHint.innerText = info.pttOnly ? 'Push-to-talk only for this engine' : 'Dual Push-to-Talk (Active)';
+  }
+}
+
+function updateSmartDetectUI() {
+  const on = smartDetectToggle.checked;
+  if (guestLangHint) guestLangHint.innerText = on ? '(starting language)' : '(fixed)';
+  if (smartDetectHint) {
+    smartDetectHint.innerText = on
+      ? "Auto-detects the guest's language"
+      : 'Guest always speaks the selected language';
+  }
+}
+
+function roleLabelFor(role, langKey) {
+  if (role === 'cast-member') {
+    const m = langMeta(langKey || getCastLang());
+    return `${m.flag} Cast Member (${m.label})`;
+  }
+  if (role === 'guest') {
+    const m = langMeta(langKey || getGuestLang());
+    return `${m.flag} Guest (${m.label})`;
+  }
+  return '🎙️ Live 2-Way Ambient';
+}
+
+function updateLanguageLabels() {
+  const cast = langMeta(getCastLang());
+  const guest = langMeta(getGuestLang());
+
+  // A guest language equal to the cast language makes no sense: disable it in the guest list
+  Array.from(guestLangSelect.options).forEach(opt => {
+    opt.disabled = opt.value === getCastLang();
+  });
+
+  if (castSpeakerLabel) castSpeakerLabel.innerText = `Cast Member (${cast.label})`;
+  guestSpeakerLabel.innerText = smartDetectToggle.checked && !detectedGuestLang
+    ? `Guest (auto-detect, starting ${guest.label})`
+    : `Guest (${guest.label})`;
+  if (!isContinuous) {
+    if (castMemberBtnSubtext) castMemberBtnSubtext.innerText = `Hold to speak ${cast.flag}`;
+    if (guestBtnSubtext) guestBtnSubtext.innerText = `Hold to speak ${smartDetectToggle.checked ? '🌐' : guest.flag}`;
+  }
+}
+
 async function startContinuousStream() {
+  const info = currentEngineInfo();
+  if (info.pttOnly) {
+    continuousStreamToggle.checked = false;
+    alert(`${info.label} supports push-to-talk only. Use the Cast Member / Guest buttons, or choose another engine for continuous mode.`);
+    return;
+  }
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    continuousStreamToggle.checked = false;
+    alert('Not connected to the translation pipeline yet.');
+    return;
+  }
+
   isContinuous = true;
   continuousStreamToggle.checked = true;
   streamModeHint.innerText = '🔴 Continuous 2-Way Stream (Live Hands-Free)';
@@ -533,17 +753,11 @@ async function startContinuousStream() {
   if (guestBtnSubtext) guestBtnSubtext.innerText = '🎙️ Live Ambient Mic';
 
   currentSpeakerRole = 'ambient';
-  addMessageBubble('ambient', '🎙️ Hands-free continuous 2-way stream active — speak naturally in English or Spanish...');
+  const cast = langMeta(getCastLang());
+  const guestHint = smartDetectToggle.checked ? 'any guest language' : langMeta(getGuestLang()).label;
+  addSystemNote(`Hands-free 2-way stream active (${info.label}). Speak naturally in ${cast.label} or ${guestHint}.`);
   await startRecording();
   setLiveStatus('🎙️ Ambient 2-Way Stream Live (Listening...)', true);
-}
-
-function getLangPair() {
-  const val = langPairSelect.value;
-  const idx = val.indexOf('-');
-  const src = val.slice(0, idx);
-  const tgt = val.slice(idx + 1);
-  return [src, tgt];
 }
 
 function stopContinuousStream() {
@@ -553,28 +767,11 @@ function stopContinuousStream() {
   streamModeHint.classList.remove('stream-active');
   castMemberMicBtn.classList.remove('ambient-active');
   guestMicBtn.classList.remove('ambient-active');
-  if (castMemberBtnSubtext) castMemberBtnSubtext.innerText = 'Hold to speak 🇺🇸';
   updateLanguageLabels();
+  updateEngineUI();
 
   stopRecording();
   setLiveStatus('Ready', false);
-}
-
-function updateLanguageLabels() {
-  const [src, tgt] = getLangPair();
-  const langNames = {
-    es: { name: 'Spanish (LATAM)', flag: '🇲🇽' },
-    'es-ES': { name: 'Spanish (Spain)', flag: '🇪🇸' },
-    pt: { name: 'Portuguese', flag: '🇧🇷' },
-    fr: { name: 'French', flag: '🇫🇷' },
-    ja: { name: 'Japanese', flag: '🇯🇵' },
-    zh: { name: 'Mandarin', flag: '🇨🇳' }
-  };
-  const targetInfo = langNames[tgt] || { name: tgt.toUpperCase(), flag: '🌐' };
-  guestSpeakerLabel.innerText = `Guest (${targetInfo.name})`;
-  if (!isContinuous) {
-    guestBtnSubtext.innerText = `Hold to speak ${targetInfo.flag}`;
-  }
 }
 
 function setupMicButton(button, role) {
@@ -582,21 +779,31 @@ function setupMicButton(button, role) {
     if (e) e.preventDefault();
     if (isContinuous) {
       stopContinuousStream();
-    } else {
-      currentSpeakerRole = role;
-      await startRecording();
+      return;
+    }
+    if (isRecording || micStarting) return;
+    currentSpeakerRole = role;
+    pttStopRequested = false;
+    await startRecording();
+    if (pttStopRequested) {
+      // Released while the microphone was still opening
+      stopRecording();
     }
   };
 
   const stopHandler = (e) => {
     if (e) e.preventDefault();
-    if (!isContinuous) {
-      stopRecording();
+    if (isContinuous) return;
+    if (micStarting) {
+      pttStopRequested = true;
+      return;
     }
+    if (isRecording) stopRecording();
   };
 
   button.addEventListener('mousedown', startHandler);
   button.addEventListener('mouseup', stopHandler);
+  button.addEventListener('mouseleave', stopHandler);
   button.addEventListener('touchstart', startHandler);
   button.addEventListener('touchend', stopHandler);
 }
@@ -607,29 +814,9 @@ function setupQuickScenarios() {
     chip.addEventListener('click', () => {
       const lang = chip.getAttribute('data-lang');
       const text = chip.getAttribute('data-text');
-      const role = lang === 'en' ? 'cast-member' : 'guest';
-      
-      currentSpeakerRole = role;
-      addMessageBubble(role, text);
-
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        lastSpeechStartTimestamp = Date.now();
-        setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
-        
-        const [src, tgt] = getLangPair();
-        const isCastMember = role === 'cast-member';
-        
-        socket.send(JSON.stringify({
-          type: 'text',
-          text,
-          speakerRole: role,
-          sourceLang: isCastMember ? src : tgt,
-          targetLang: isCastMember ? tgt : src,
-          useGlossary: true,
-          useDlp: dlpMasterEnabled,
-          dlpInfoTypes: Array.from(activeDlpInfoTypes)
-        }));
-      }
+      // Phrases written in the cast language are cast turns; anything else is a guest turn
+      const role = lang.split('-')[0] === getCastLang().split('-')[0] ? 'cast-member' : 'guest';
+      sendTextTurn(text, role, lang);
     });
   });
 }
@@ -638,25 +825,26 @@ function handleSendText() {
   const text = textInput.value.trim();
   if (!text) return;
   textInput.value = '';
+  sendTextTurn(text, 'cast-member');
+}
 
-  currentSpeakerRole = 'cast-member';
-  addMessageBubble('cast-member', text);
-
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    lastSpeechStartTimestamp = Date.now();
-    setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
-    const [src, tgt] = getLangPair();
-    socket.send(JSON.stringify({
-      type: 'text',
-      text,
-      speakerRole: 'cast-member',
-      sourceLang: src,
-      targetLang: tgt,
-      useGlossary: true,
-      useDlp: dlpMasterEnabled,
-      dlpInfoTypes: Array.from(activeDlpInfoTypes)
-    }));
+function sendTextTurn(text, role, langHint = null) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to the translation pipeline yet.');
+    return;
   }
+  const turnId = nextTurnId();
+  currentSpeakerRole = role;
+  addMessageBubble(role, text, turnId, role === 'guest' ? langHint : null);
+  lastSpeechStartTimestamp = Date.now();
+  setLiveStatus('Scrubbing PII with Cloud DLP & Translating...', true);
+  socket.send(JSON.stringify({
+    type: 'text',
+    text,
+    turnId,
+    speakerRole: role,
+    ...getTurnConfig()
+  }));
 }
 
 // WebSocket Connection
@@ -697,164 +885,19 @@ async function connectWebSocket() {
       console.log(`[WS] Connected to Translation Pipeline`);
       updateStatus('connected', 'Live & Ready');
       setLiveStatus('Ready');
+      // Push the current Cast / Guest / engine settings to the new session
+      sendSessionConfig();
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.type === 'ready' || data.type === 'stream_started') {
-        console.log('[WS] Session ready:', data);
-        setLiveStatus('Ready');
-        updateStatus('connected', 'Live & Ready');
-      } else if (data.type === 'interim_transcript') {
-        const role = data.speakerRole || currentSpeakerRole;
-        if (!currentMessageBubble) {
-          addMessageBubble(role, data.transcript);
-        } else {
-          const textEl = currentMessageBubble.querySelector('.message-text');
-          if (textEl) {
-            textEl.innerHTML = `<span class="interim-text">"${data.transcript}..."</span> <span class="badge-mini">⚡ live</span>`;
-          }
-        }
-      } else if (data.type === 'stt_transcript') {
-        console.log('[WS] STT Transcript:', data);
-        const role = data.speakerRole || currentSpeakerRole;
-        if (!currentMessageBubble) {
-          addMessageBubble(role, data.transcript);
-        }
-        updateSpeakerOriginalText(
-          data.sanitized_transcript || data.transcript,
-          data.stt_ms,
-          data.stt_model,
-          role,
-          data.dlp_applied
-        );
-        if (sttLatencyVal && data.stt_ms !== undefined) {
-          sttLatencyVal.innerText = Math.round(data.stt_ms);
-        }
-        if (sttModelSub && data.stt_model) {
-          sttModelSub.innerText = data.stt_model;
-        }
-        if (terminalSttText) {
-          terminalSttText.innerText = data.transcript ? `"${data.transcript}"` : '(No speech detected)';
-          terminalSttMeta.innerText = `${data.stt_model || 'chirp_3'} • ${data.detectedLang || 'en-US'} • ${Math.round(data.stt_ms || 0)}ms`;
-        }
-        if (data.transcript) {
-          addTerminalLog(`STT Captured (${data.stt_model || 'chirp_3'}): "${data.transcript}" (${data.detectedLang || 'en-US'}, ${Math.round(data.stt_ms || 0)}ms)`, 'stt');
-        }
-        setLiveStatus('Scrubbing PII & Translating...', true);
-      } else if (data.type === 'dlp_status') {
-        console.log('[WS] DLP Status:', data);
-        if (dlpLatencyVal && data.dlp_latency_ms !== undefined) {
-          dlpLatencyVal.innerText = Math.round(data.dlp_latency_ms);
-        }
-        if (dlpMetricSub) {
-          dlpMetricSub.innerText = data.pii_detected 
-            ? `⚠️ ${data.findings.length} PII Masked` 
-            : (data.dlp_enabled ? '🛡️ PCI & Custom Safe' : '⚠️ Bypassed');
-        }
-        if (terminalDlpText) {
-          if (data.pii_detected) {
-            terminalDlpText.innerHTML = `⚠️ <span style="color:#ff8a80">PII Scrubbed:</span> "${data.sanitized_text}"`;
-            terminalDlpMeta.innerText = `${data.findings.length} Findings • ${Math.round(data.dlp_latency_ms || 0)}ms`;
-            addTerminalLog(`[DLP MASKED] ${data.findings.map(f => f.displayName || f.infoType).join(', ')} -> Redacted before LLM (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
-          } else {
-            terminalDlpText.innerText = data.dlp_enabled ? `🛡️ Clean (No PII Detected)` : `⚠️ DLP Bypassed (Raw)`;
-            terminalDlpMeta.innerText = `${Math.round(data.dlp_latency_ms || 0)}ms`;
-          }
-        }
-      } else if (data.type === 'translation_text') {
-        console.log('[WS] Translation Text:', data);
-        updateMessageTranslation(data.translated_text, data.glossary_applied, data.translation_ms);
-        if (transLatencyVal && data.translation_ms !== undefined) {
-          transLatencyVal.innerText = Math.round(data.translation_ms);
-        }
-        if (terminalMtText) {
-          terminalMtText.innerText = `"${data.translated_text}"`;
-          terminalMtMeta.innerText = `${data.glossary_applied ? '📖 Brand Glossary Enforced' : 'Direct LLM'} • ${Math.round(data.translation_ms || 0)}ms`;
-        }
-        addTerminalLog(`Translation: "${data.translated_text}" (${data.glossary_applied ? 'Brand Glossary Enforced' : 'Direct LLM'}, ${Math.round(data.translation_ms || 0)}ms)`, 'mt');
-        setLiveStatus('Generating Neural Speech...', true);
-      } else if (data.type === 'audio' && data.pcm) {
-        if (data.total_latency_ms && data.total_latency_ms > 0) {
-          latencyValue.innerText = Math.round(data.total_latency_ms);
-        } else if (lastSpeechStartTimestamp > 0) {
-          latencyValue.innerText = Math.round(Date.now() - lastSpeechStartTimestamp);
-        }
-
-        if (data.latency_breakdown) {
-          if (sttLatencyVal && data.latency_breakdown.stt_ms !== undefined) {
-            sttLatencyVal.innerText = Math.round(data.latency_breakdown.stt_ms);
-          }
-          if (dlpLatencyVal && data.latency_breakdown.dlp_ms !== undefined) {
-            dlpLatencyVal.innerText = Math.round(data.latency_breakdown.dlp_ms);
-          }
-          if (transLatencyVal && data.latency_breakdown.translation_ms !== undefined) {
-            transLatencyVal.innerText = Math.round(data.latency_breakdown.translation_ms);
-          }
-          if (ttsLatencyVal && data.latency_breakdown.tts_ms !== undefined) {
-            ttsLatencyVal.innerText = Math.round(data.latency_breakdown.tts_ms);
-          }
-        }
-
-        if (terminalTtsText) {
-          terminalTtsText.innerText = `🔊 Synthesized ${Math.round(data.pcm.length / 1024)} KB audio`;
-          terminalTtsMeta.innerText = `Total: ${Math.round(data.total_latency_ms || 0)}ms`;
-        }
-        if (terminalMicState) {
-          terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Ready';
-          terminalMicState.style.color = '#2ecc71';
-        }
-        addTerminalLog(`TTS Audio ready -> Playing through FIFO Audio Queue (Total E2E: ${Math.round(data.total_latency_ms || 0)}ms)`, 'tts');
-
-        // Store PCM chunk for audio download & persistence
-        liveSynthesizedPcmChunks.push({
-          pcmBase64: data.pcm,
-          sampleRate: data.sampleRate || 24000
-        });
-
-        setLiveStatus('Playing Translation Speech...', true);
-        playPcmChunk(data.pcm, data.sampleRate || 24000);
-        if (isContinuous) {
-          currentMessageBubble = null;
-        }
-      } else if (data.type === 'transcript' && data.text) {
-        updateMessageTranslation(data.text);
-      } else if (data.type === 'no_speech') {
-        setLiveStatus(isContinuous ? '🎙️ Ambient Mic Active (Listening...)' : 'Ready', isContinuous);
-        if (terminalSttText) {
-          terminalSttText.innerText = '(No audible speech detected - speak closer to mic)';
-          terminalSttMeta.innerText = '--';
-        }
-        if (terminalMicState) {
-          terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Ready';
-          terminalMicState.style.color = '#2ecc71';
-        }
-        addTerminalLog('No audible speech detected in audio turn.', 'err');
-        if (currentMessageBubble) {
-          const textEl = currentMessageBubble.querySelector('.message-text');
-          if (textEl && textEl.innerText.includes('Speaking')) {
-            textEl.innerText = '(No clear speech detected - please speak closer to microphone)';
-          }
-          const transEl = currentMessageBubble.querySelector('.message-translated');
-          if (transEl) transEl.innerText = '';
-        }
-      } else if (data.type === 'turn_complete') {
-        if (isContinuous) {
-          setLiveStatus('🎙️ Ambient Mic Active (Listening for English or Spanish...)', true);
-          currentMessageBubble = null;
-        } else {
-          setLiveStatus('Ready', false);
-        }
-      } else if (data.type === 'interrupted') {
-        setLiveStatus('Interrupted (Listening...)', true);
-        currentMessageBubble = null;
-      } else if (data.type === 'error') {
-        console.error('[WS] Server error:', data.message);
-        setLiveStatus(`Error: ${data.message}`, false);
-        updateStatus('disconnected', 'Service Error');
-        addTerminalLog(`Pipeline Error: ${data.message}`, 'err');
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        console.warn('[WS] Non-JSON message ignored');
+        return;
       }
+      handleServerEvent(data);
     };
 
     socket.onerror = (err) => {
@@ -895,13 +938,312 @@ function setLiveStatus(text, isPulse = false) {
   }
 }
 
-// Audio Recording (Capture 16kHz PCM)
+// ----------------------------------------------------
+// Server event handling (events carry the turnId of the bubble they belong to)
+// ----------------------------------------------------
+function engineLabel(key) {
+  return (ENGINE_INFO[key] && ENGINE_INFO[key].label) || key || 'engine';
+}
+
+function setMetric(el, value) {
+  if (!el) return;
+  el.innerText = (value === null || value === undefined || Number.isNaN(value)) ? '--' : Math.round(value);
+}
+
+function handleServerEvent(data) {
+  const turnId = data.turnId || null;
+
+  switch (data.type) {
+    case 'ready':
+      console.log('[WS] Session ready:', data);
+      updateStatus('connected', 'Live & Ready');
+      break;
+
+    case 'config_ack':
+      console.log('[WS] Config applied:', data);
+      break;
+
+    case 'stream_started':
+      console.log('[WS] Stream started:', data);
+      if (data.hotSwapped) {
+        activeStreamTurnId = data.turnId;
+        addSystemNote(`🔄 Switched active stream engine to ${engineLabel(data.engine)}`);
+      }
+      addTerminalLog(`Stream ${data.hotSwapped ? 'hot-swapped' : 'opened'} (${engineLabel(data.engine)}, ${data.speakerRole}, cast=${data.castLang}, guest=${data.guestLang}${data.smartDetect ? ', smart detection' : ''})`, 'system');
+      break;
+
+    case 'guest_language_detected':
+      showDetectedGuest(data);
+      break;
+
+    case 'engine_fallback': {
+      const msg = `${engineLabel(data.from)} unavailable, using ${engineLabel(data.to)} for this turn.`;
+      addSystemNote(`${msg}${data.reason ? ' ' + data.reason : ''}`);
+      addTerminalLog(`Engine fallback: ${msg} ${data.reason || ''}`, 'err');
+      break;
+    }
+
+    case 'interim_transcript': {
+      const bubble = ensureTurnBubble(turnId, data.speakerRole);
+      setBubbleInterim(bubble, data.transcript);
+      if (terminalSttText && data.transcript) terminalSttText.innerText = `"${data.transcript}..."`;
+      break;
+    }
+
+    case 'interim_translation': {
+      const bubble = ensureTurnBubble(turnId, data.speakerRole);
+      updateBubbleTranslation(bubble, data.translated_text, { interim: true });
+      break;
+    }
+
+    case 'stt_transcript': {
+      console.log('[WS] STT Transcript:', data);
+      const bubble = ensureTurnBubble(turnId, data.speakerRole);
+      updateBubbleOriginal(bubble, {
+        transcript: data.sanitized_transcript || data.transcript,
+        sttMs: data.stt_ms,
+        sttModel: data.stt_model,
+        role: data.speakerRole,
+        srcLang: data.srcLang,
+        tgtLang: data.tgtLang,
+        detectedLang: data.detectedLang,
+        dlpApplied: data.dlp_applied,
+        dlpScope: data.dlp_scope
+      });
+      setMetric(sttLatencyVal, data.stt_ms);
+      if (sttModelSub && data.stt_model) sttModelSub.innerText = data.stt_model;
+      const sttMsText = data.stt_ms === null || data.stt_ms === undefined ? 'in-model' : `${Math.round(data.stt_ms)}ms`;
+      if (terminalSttText) {
+        terminalSttText.innerText = data.transcript ? `"${data.transcript}"` : '(No speech detected)';
+        terminalSttMeta.innerText = `${data.stt_model || ''} • ${data.detectedLang || data.srcLang || '?'} • ${sttMsText}`;
+      }
+      if (data.transcript) {
+        addTerminalLog(`STT (${data.stt_model}): "${data.transcript}" [${data.detectedLang || data.srcLang}] ${data.srcLang} → ${data.tgtLang}, ${sttMsText}`, 'stt');
+      }
+      if (!currentEngineInfo().speechToSpeech) setLiveStatus('Scrubbing PII & Translating...', true);
+      break;
+    }
+
+    case 'dlp_status': {
+      console.log('[WS] DLP Status:', data);
+      setMetric(dlpLatencyVal, data.dlp_latency_ms);
+      if (turnId && bubblesByTurn.has(turnId)) {
+        const b = bubblesByTurn.get(turnId);
+        if (b && b._turnData) {
+          b._turnData.dlpMs = data.dlp_latency_ms;
+          b._turnData.dlpApplied = !!data.pii_detected;
+          b._turnData.dlpScope = data.dlp_scope;
+          renderBubbleLatencyRow(b);
+        }
+      }
+      const scope = data.dlp_scope === 'transcript_only' ? ' (transcript only)' : '';
+      const findings = data.findings || [];
+      if (dlpMetricSub) {
+        dlpMetricSub.innerText = data.pii_detected
+          ? `⚠️ ${findings.length} PII Masked${scope}`
+          : (data.dlp_enabled ? `🛡️ Clean${scope}` : '⚠️ Bypassed');
+      }
+      if (terminalDlpText) {
+        if (data.pii_detected) {
+          terminalDlpText.innerHTML = `⚠️ <span style="color:#ff8a80">PII Scrubbed:</span> "${escapeHtml(data.sanitized_text)}"`;
+          terminalDlpMeta.innerText = `${findings.length} Findings • ${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
+          const where = data.dlp_scope === 'transcript_only' ? 'in transcripts (spoken audio is not redacted)' : 'before translation and speech';
+          addTerminalLog(`[DLP MASKED] ${findings.map(f => f.infoType ? (f.displayName || f.infoType) : f).join(', ')} redacted ${where} (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
+        } else {
+          terminalDlpText.innerText = data.dlp_enabled ? `🛡️ Clean (No PII Detected)` : `⚠️ DLP Bypassed (Raw)`;
+          terminalDlpMeta.innerText = `${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
+        }
+      }
+      break;
+    }
+
+    case 'translation_text': {
+      console.log('[WS] Translation Text:', data);
+      const bubble = ensureTurnBubble(turnId, data.speakerRole);
+      updateBubbleTranslation(bubble, data.translated_text, {
+        glossaryApplied: data.glossary_applied,
+        glossaryMode: data.glossary_mode,
+        transMs: data.translation_ms,
+        ttsMs: data.tts_ms,
+        totalLatencyMs: data.total_latency_ms,
+        tgtLang: data.tgtLang,
+        engine: data.engine,
+        model: data.model
+      });
+      setMetric(transLatencyVal, data.translation_ms);
+      if (data.tts_ms !== undefined && data.tts_ms !== null) {
+        setMetric(ttsLatencyVal, data.tts_ms);
+      }
+      if (data.total_latency_ms !== undefined && data.total_latency_ms !== null) {
+        setMetric(latencyValue, data.total_latency_ms);
+        if (latencySub) {
+          latencySub.innerText = data.engine
+            ? (isContinuous ? 'Speech pause → translated audio + DLP' : 'Release → translated audio + DLP')
+            : 'End-to-End Latency';
+        }
+      }
+      let glossaryText;
+      if (data.glossary_mode === 'prompt') glossaryText = 'Glossary via system prompt';
+      else if (data.glossary_mode === 'none') glossaryText = 'No glossary (not supported by engine)';
+      else glossaryText = data.glossary_applied ? '📖 Brand Glossary Enforced' : (data.model || 'Cloud Translation v3');
+      if (terminalMtText) {
+        terminalMtText.innerText = `"${data.translated_text}"`;
+        terminalMtMeta.innerText = `${glossaryText} • ${Math.round(data.translation_ms || 0)}ms`;
+      }
+      addTerminalLog(`Translation ${data.srcLang || ''} → ${data.tgtLang || ''}: "${data.translated_text}" (${glossaryText}, ${Math.round(data.translation_ms || 0)}ms)`, 'mt');
+      if (!currentEngineInfo().speechToSpeech) setLiveStatus('Generating Neural Speech...', true);
+      break;
+    }
+
+    case 'audio': {
+      if (!data.pcm) break;
+      const firstChunk = data.total_latency_ms !== undefined;
+      if (firstChunk) {
+        setMetric(latencyValue, data.total_latency_ms);
+        const lb = data.latency_breakdown || {};
+        if (lb.first_audio_ms !== undefined) {
+          if (latencySub) {
+            latencySub.innerText = isContinuous ? 'Speech pause → first translated audio' : 'Release → first translated audio';
+          }
+          if (lb.stt_ms !== undefined && lb.stt_ms !== null) setMetric(sttLatencyVal, lb.stt_ms);
+          setMetric(transLatencyVal, lb.translation_ms !== undefined ? lb.translation_ms : lb.first_audio_ms);
+          if (lb.tts_ms !== undefined && lb.tts_ms !== null) setMetric(ttsLatencyVal, lb.tts_ms);
+        } else {
+          if (latencySub) latencySub.innerText = 'End-to-End Latency';
+          setMetric(sttLatencyVal, lb.stt_ms);
+          setMetric(dlpLatencyVal, lb.dlp_ms);
+          setMetric(transLatencyVal, lb.translation_ms);
+          setMetric(ttsLatencyVal, lb.tts_ms);
+        }
+        if (terminalTtsText) {
+          const ttsStageMs = lb.tts_ms !== undefined && lb.tts_ms !== null ? `TTS: ${Math.round(lb.tts_ms)}ms • ` : '';
+          terminalTtsText.innerText = data.streaming ? '🔊 Streaming translated audio' : `🔊 Synthesized ${Math.round(data.pcm.length / 1024)} KB audio`;
+          terminalTtsMeta.innerText = `${ttsStageMs}Total: ${Math.round(data.total_latency_ms || 0)}ms`;
+        }
+        addTerminalLog(`Audio ready → playing (${data.streaming ? engineLabel(data.engine) + ' native audio' : data.voice || 'Chirp 3 HD'}, ${Math.round(data.total_latency_ms || 0)}ms)`, 'tts');
+      }
+      if (terminalMicState && !isRecording) {
+        terminalMicState.innerText = '🎙️ Mic Ready';
+        terminalMicState.style.color = '#2ecc71';
+      }
+
+      // Attach per-turn latency breakdown and PCM chunk to the turn bubble
+      const audioBubble = (turnId && bubblesByTurn.has(turnId)) ? bubblesByTurn.get(turnId) : currentMessageBubble;
+      if (audioBubble && audioBubble._turnData) {
+        const td = audioBubble._turnData;
+        if (!td.pcmChunks) td.pcmChunks = [];
+        td.pcmChunks.push({ pcmBase64: data.pcm, sampleRate: data.sampleRate || 24000 });
+        if (firstChunk) {
+          const lb = data.latency_breakdown || {};
+          if (data.total_latency_ms !== undefined && data.total_latency_ms !== null) td.totalLatencyMs = data.total_latency_ms;
+          if (lb.stt_ms !== undefined && lb.stt_ms !== null) td.sttMs = lb.stt_ms;
+          if (lb.dlp_ms !== undefined && lb.dlp_ms !== null) td.dlpMs = lb.dlp_ms;
+          if (lb.translation_ms !== undefined && lb.translation_ms !== null) td.transMs = lb.translation_ms;
+          else if (lb.first_audio_ms !== undefined && lb.first_audio_ms !== null && (td.transMs === undefined || td.transMs === null)) td.transMs = lb.first_audio_ms;
+          if (lb.tts_ms !== undefined && lb.tts_ms !== null) td.ttsMs = lb.tts_ms;
+          if (data.engine && !td.engine) td.engine = data.engine;
+          renderBubbleLatencyRow(audioBubble);
+        }
+      }
+
+      // Keep a copy for the audio download / saved conversation
+      liveSynthesizedPcmChunks.push({ pcmBase64: data.pcm, sampleRate: data.sampleRate || 24000 });
+
+      setLiveStatus('Playing Translation Speech...', true);
+      playPcmChunk(data.pcm, data.sampleRate || 24000);
+      break;
+    }
+
+    case 'transcript':
+      if (data.text) updateBubbleTranslation(ensureTurnBubble(turnId, data.speakerRole), data.text);
+      break;
+
+    case 'no_speech': {
+      if (!isRecording) setLiveStatus(isContinuous ? '🎙️ Ambient Mic Active (Listening...)' : 'Ready', isContinuous);
+      if (terminalSttText) {
+        terminalSttText.innerText = '(No audible speech detected - speak closer to mic)';
+        terminalSttMeta.innerText = '--';
+      }
+      addTerminalLog('No audible speech detected in audio turn.', 'err');
+      const bubble = turnId ? bubblesByTurn.get(turnId) : currentMessageBubble;
+      if (bubble && !(bubble._turnData && bubble._turnData.finalized)) {
+        const textEl = bubble.querySelector('.message-text');
+        if (textEl) textEl.innerText = '(No clear speech detected - please speak closer to the microphone)';
+        const transEl = bubble.querySelector('.message-translated');
+        if (transEl) transEl.innerText = '';
+        dropTurnData(bubble);
+      }
+      break;
+    }
+
+    case 'turn_complete': {
+      const bubble = turnId ? bubblesByTurn.get(turnId) : null;
+      if (bubble && bubble._turnData && !bubble._turnData.finalized && !bubble._turnData.dropped) {
+        // Nothing came back for this turn (e.g. an engine error): don't leave it stuck on "Translating..."
+        const transEl = bubble.querySelector('.message-translated');
+        if (transEl && transEl.innerText.includes('Translating')) transEl.innerText = '';
+      }
+      if (isContinuous) {
+        setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
+      } else if (!isRecording && !isSpeakingSelf) {
+        setLiveStatus('Ready', false);
+      }
+      break;
+    }
+
+    case 'interrupted':
+      stopPlayback();
+      setLiveStatus('Interrupted (Listening...)', true);
+      break;
+
+    case 'error': {
+      console.error('[WS] Server error:', data.message);
+      addTerminalLog(`Pipeline Error: ${data.message}`, 'err');
+      setLiveStatus(`Error: ${data.message}`, false);
+      const bubble = turnId ? bubblesByTurn.get(turnId) : null;
+      if (bubble) {
+        const transEl = bubble.querySelector('.message-translated');
+        if (transEl) transEl.innerHTML = `<span class="bubble-error">⚠️ ${escapeHtml(data.message)}</span>`;
+      }
+      if (isContinuous && turnId && turnId === activeStreamTurnId) {
+        // The continuous stream itself failed: return to push-to-talk
+        stopContinuousStream();
+      }
+      break;
+    }
+
+    default:
+      console.log('[WS] Unhandled event:', data.type, data);
+  }
+}
+
+// ----------------------------------------------------
+// Audio capture: 16 kHz LINEAR16 streamed to the server in ~256 ms chunks
+// ----------------------------------------------------
+let micStarting = false;
+let pttStopRequested = false;
+let pttStopTimer = null;
+const PTT_TAIL_MS = 250; // keep streaming briefly after release so the last word isn't clipped
+
+function nextTurnId() {
+  turnCounter += 1;
+  return `c${Date.now().toString(36)}-${turnCounter}`;
+}
+
+function sendAudioChunk(pcm16) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'audio_chunk', pcm: arrayBufferToBase64(pcm16.buffer) }));
+  }
+}
+
 async function startRecording() {
-  if (isRecording) return;
-  recordedChunks = [];
-  vadSpeaking = false;
-  vadSilenceStart = 0;
-  
+  if (isRecording || micStarting) return;
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to the translation pipeline yet. Please wait for "Live & Ready".');
+    return;
+  }
+  micStarting = true;
+
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     if (audioContext.state === 'suspended') {
@@ -920,15 +1262,22 @@ async function startRecording() {
 
     console.log('[Mic] Microphone opened successfully. AudioContext state:', audioContext.state);
 
+    const role = isContinuous ? 'ambient' : currentSpeakerRole;
+    if (!isContinuous) {
+      // Barge-in: a new push-to-talk turn cuts off any translation still playing
+      stopPlayback();
+    }
+
+    const turnId = nextTurnId();
+    activeStreamTurnId = turnId;
+    socket.send(JSON.stringify({ type: 'audio_stream_start', turnId, speakerRole: role, ...getTurnConfig() }));
+
     const source = audioContext.createMediaStreamSource(micStream);
     scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
     scriptProcessor.onaudioprocess = (e) => {
       if (!isRecording) return;
-      if (isSpeakingSelf) return;
-
       const inputData = e.inputBuffer.getChannelData(0);
-      const pcm16 = convertFloat32ToInt16(inputData);
 
       let sum = 0;
       for (let i = 0; i < inputData.length; i++) {
@@ -936,56 +1285,22 @@ async function startRecording() {
       }
       const rms = Math.sqrt(sum / inputData.length);
 
+      // In continuous mode, send silence while our own translation is playing so the
+      // speaker output is not transcribed again (the server keeps its stream timing).
+      const muted = isContinuous && isSpeakingSelf;
+      const pcm16 = muted ? new Int16Array(inputData.length) : convertFloat32ToInt16(inputData);
+      sendAudioChunk(pcm16);
+
       if (terminalRmsBar) {
-        const pct = Math.min(100, Math.round(rms * 2500));
-        terminalRmsBar.style.width = `${pct}%`;
+        terminalRmsBar.style.width = `${muted ? 0 : Math.min(100, Math.round(rms * 2500))}%`;
       }
       if (terminalRmsText) {
-        terminalRmsText.innerText = `${rms.toFixed(4)} RMS ${vadSpeaking ? '🎙️ (Speaking)' : '(Listening)'}`;
+        terminalRmsText.innerText = muted ? 'muted during playback' : `${rms.toFixed(4)} RMS (streaming)`;
       }
-      if (rms > 0.002) {
+      if (!muted && rms > 0.002) {
         audioPulse.classList.add('active');
-      } else if (!vadSpeaking) {
+      } else if (!isSpeakingSelf) {
         audioPulse.classList.remove('active');
-      }
-
-      if (isContinuous) {
-        if (rms > VAD_ENERGY_THRESHOLD) {
-          if (!vadSpeaking) {
-            vadSpeaking = true;
-            vadSilenceStart = 0;
-            recordedChunks = [];
-            lastSpeechStartTimestamp = Date.now();
-            console.log('[VAD] Speech started! RMS:', rms.toFixed(4));
-            setLiveStatus('🎙️ Voice detected (Listening...)', true);
-            if (terminalMicState) {
-              terminalMicState.innerText = '🔴 Recording Turn...';
-              terminalMicState.style.color = '#e74c3c';
-            }
-            addTerminalLog(`Speech detected (RMS: ${rms.toFixed(4)}) - Buffering turn...`, 'stt');
-            addMessageBubble('ambient', '🎤 Listening...');
-          } else {
-            vadSilenceStart = 0;
-          }
-          recordedChunks.push(pcm16);
-        } else if (vadSpeaking) {
-          recordedChunks.push(pcm16);
-          if (vadSilenceStart === 0) {
-            vadSilenceStart = Date.now();
-          } else if (Date.now() - vadSilenceStart > VAD_SILENCE_TIMEOUT_MS) {
-            console.log('[VAD] Speech pause detected');
-            vadSpeaking = false;
-            vadSilenceStart = 0;
-            if (terminalMicState) {
-              terminalMicState.innerText = '⚡ Processing Turn...';
-              terminalMicState.style.color = '#f1c40f';
-            }
-            addTerminalLog('Speech pause detected -> Dispatched audio turn to STT & Translation Pipeline', 'stt');
-            dispatchContinuousUtterance('ambient');
-          }
-        }
-      } else {
-        recordedChunks.push(pcm16);
       }
     };
 
@@ -994,79 +1309,36 @@ async function startRecording() {
 
     isRecording = true;
     if (terminalMicState) {
-      terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live' : '🎙️ Mic Active';
-      terminalMicState.style.color = '#2ecc71';
+      terminalMicState.innerText = isContinuous ? '🎙️ Ambient Live (streaming)' : '🔴 Streaming Turn...';
+      terminalMicState.style.color = isContinuous ? '#2ecc71' : '#e74c3c';
     }
 
     if (!isContinuous) {
-      const activeBtn = currentSpeakerRole === 'cast-member' ? castMemberMicBtn : guestMicBtn;
+      const activeBtn = role === 'cast-member' ? castMemberMicBtn : guestMicBtn;
       activeBtn.classList.add('recording');
       lastSpeechStartTimestamp = Date.now();
-      const isCastMember = currentSpeakerRole === 'cast-member';
-      setLiveStatus(`Listening to ${isCastMember ? 'Cast Member (English)' : 'Guest (Spanish)'}...`, true);
-      addMessageBubble(currentSpeakerRole, "🎤 Speaking...");
+      const who = role === 'cast-member'
+        ? `Cast Member (${langMeta(getCastLang()).label})`
+        : (smartDetectToggle.checked ? 'Guest (auto-detect)' : `Guest (${langMeta(getGuestLang()).label})`);
+      setLiveStatus(`Listening to ${who}...`, true);
+      addMessageBubble(role, '🎤 Speaking...', turnId);
     }
   } catch (err) {
     console.error('Microphone error:', err);
+    teardownMic();
+    if (activeStreamTurnId && socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'audio_stream_end', turnId: activeStreamTurnId }));
+    }
+    activeStreamTurnId = null;
     alert('Please allow microphone access to test live speech translation.');
+  } finally {
+    micStarting = false;
   }
 }
 
-function dispatchContinuousUtterance(role = currentSpeakerRole) {
-  if (recordedChunks.length === 0) return;
-  setLiveStatus('⚡ Transcribing & Translating...', true);
-  
-  let totalLength = 0;
-  for (const chunk of recordedChunks) totalLength += chunk.length;
-  if (totalLength < 2400) {
-    recordedChunks = [];
-    return;
-  }
-
-  const mergedPcm = new Int16Array(totalLength);
-  let offset = 0;
-  for (const chunk of recordedChunks) {
-    mergedPcm.set(chunk, offset);
-    offset += chunk.length;
-  }
-  recordedChunks = [];
-
-  const base64Pcm = arrayBufferToBase64(mergedPcm.buffer);
-  const selectedModel = sttModelSelect ? sttModelSelect.value : 'chirp_3';
-  if (terminalSttText) {
-    terminalSttText.innerText = '⏳ Transcribing audio turn...';
-    terminalSttMeta.innerText = selectedModel;
-  }
-
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    const [srcLang, tgtLang] = getLangPair();
-    const isGuest = role === 'guest';
-    
-    socket.send(JSON.stringify({
-      type: 'audio',
-      pcm: base64Pcm,
-      sampleRate: 16000,
-      speakerRole: role,
-      sourceLang: isGuest ? tgtLang : srcLang,
-      targetLang: isGuest ? srcLang : tgtLang,
-      sttModel: selectedModel,
-      useGlossary: true,
-      useDlp: dlpMasterEnabled,
-      dlpInfoTypes: Array.from(activeDlpInfoTypes)
-    }));
-  }
-}
-
-function stopRecording() {
-  if (!isRecording) return;
-  isRecording = false;
-  vadSpeaking = false;
-  vadSilenceStart = 0;
-
-  castMemberMicBtn.classList.remove('recording');
-  guestMicBtn.classList.remove('recording');
-
+function teardownMic() {
   if (scriptProcessor) {
+    scriptProcessor.onaudioprocess = null;
     scriptProcessor.disconnect();
     scriptProcessor = null;
   }
@@ -1074,12 +1346,37 @@ function stopRecording() {
     micStream.getTracks().forEach(track => track.stop());
     micStream = null;
   }
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+  }
+}
 
-  if (!isContinuous && recordedChunks.length > 0) {
-    setLiveStatus('Transcribing...', true);
-    dispatchContinuousUtterance(currentSpeakerRole);
-  } else if (!isContinuous) {
-    setLiveStatus('Processing...', true);
+function stopRecording() {
+  if (!isRecording) return;
+  castMemberMicBtn.classList.remove('recording');
+  guestMicBtn.classList.remove('recording');
+
+  const finish = () => {
+    pttStopTimer = null;
+    isRecording = false;
+    teardownMic();
+    if (socket && socket.readyState === WebSocket.OPEN && activeStreamTurnId) {
+      socket.send(JSON.stringify({ type: 'audio_stream_end', turnId: activeStreamTurnId }));
+    }
+    activeStreamTurnId = null;
+    if (terminalMicState) {
+      terminalMicState.innerText = '⚡ Processing Turn...';
+      terminalMicState.style.color = '#f1c40f';
+    }
+    if (!isContinuous) setLiveStatus('Transcribing & Translating...', true);
+  };
+
+  if (isContinuous || pttStopTimer) {
+    if (pttStopTimer) clearTimeout(pttStopTimer);
+    finish();
+  } else {
+    pttStopTimer = setTimeout(finish, PTT_TAIL_MS);
   }
 }
 
@@ -1104,154 +1401,301 @@ function arrayBufferToBase64(buffer) {
   return window.btoa(binary);
 }
 
-// Sequential FIFO Audio Playback Queue to prevent speech overlap
-let audioPlaybackQueue = [];
-let isPlayingAudio = false;
+// Gapless playback scheduler: chunks (whole TTS clips or streamed Gemini audio) are queued
+// back-to-back on one AudioContext so streamed audio plays without gaps or overlap.
+let playbackQueueEnd = 0;
+const activePlaybackSources = new Set();
 let isSpeakingSelf = false;
+let speakingSelfTimer = null;
 
-function playPcmChunk(base64Data, sampleRate = 24000) {
-  audioPlaybackQueue.push({ base64Data, sampleRate });
-  if (!isPlayingAudio) {
-    processNextAudioInQueue();
+function decodePcm16Base64(base64Data) {
+  const binaryString = window.atob(base64Data);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
   }
+  const int16Array = new Int16Array(bytes.buffer, 0, Math.floor(len / 2));
+  const float32Array = new Float32Array(int16Array.length);
+  for (let i = 0; i < int16Array.length; i++) {
+    float32Array[i] = int16Array[i] / 32768.0;
+  }
+  return float32Array;
 }
 
-function processNextAudioInQueue() {
-  if (audioPlaybackQueue.length === 0) {
-    isPlayingAudio = false;
-    setTimeout(() => {
-      isSpeakingSelf = false;
-      if (isContinuous) {
-        setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
-      }
-    }, 350);
-    return;
-  }
-
-  isPlayingAudio = true;
-  isSpeakingSelf = true;
-  const { base64Data, sampleRate } = audioPlaybackQueue.shift();
-
-  if (!playbackContext) {
-    playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
-  }
-  if (playbackContext.state === 'suspended') {
-    playbackContext.resume();
-  }
-
+function playPcmChunk(base64Data, sampleRate = 24000) {
   try {
-    const binaryString = window.atob(base64Data);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    if (!playbackContext) {
+      playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    }
+    if (playbackContext.state === 'suspended') {
+      playbackContext.resume();
     }
 
-    const int16Array = new Int16Array(bytes.buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
-    }
-
-    const audioBuffer = playbackContext.createBuffer(1, float32Array.length, sampleRate);
-    audioBuffer.getChannelData(0).set(float32Array);
+    const samples = decodePcm16Base64(base64Data);
+    if (samples.length === 0) return;
+    const audioBuffer = playbackContext.createBuffer(1, samples.length, sampleRate);
+    audioBuffer.getChannelData(0).set(samples);
 
     const sourceNode = playbackContext.createBufferSource();
     sourceNode.buffer = audioBuffer;
     sourceNode.connect(playbackContext.destination);
 
-    sourceNode.onended = () => {
-      processNextAudioInQueue();
-    };
+    const startAt = Math.max(playbackContext.currentTime + 0.02, playbackQueueEnd);
+    playbackQueueEnd = startAt + audioBuffer.duration;
+    activePlaybackSources.add(sourceNode);
+    isSpeakingSelf = true;
+    if (speakingSelfTimer) {
+      clearTimeout(speakingSelfTimer);
+      speakingSelfTimer = null;
+    }
 
-    sourceNode.start();
+    sourceNode.onended = () => {
+      activePlaybackSources.delete(sourceNode);
+      if (activePlaybackSources.size === 0) {
+        // Short grace period so the room echo of the last word is not picked up
+        speakingSelfTimer = setTimeout(() => {
+          isSpeakingSelf = false;
+          if (isContinuous) {
+            setLiveStatus('🎙️ Ambient Mic Active (Listening...)', true);
+          } else if (!isRecording) {
+            setLiveStatus('Ready', false);
+          }
+        }, 350);
+      }
+    };
+    sourceNode.start(startAt);
   } catch (err) {
-    console.error('[Audio Queue] Playback error:', err);
-    processNextAudioInQueue();
+    console.error('[Audio] Playback error:', err);
   }
 }
 
-// Dialogue UI Feed
-function addMessageBubble(role, originalText) {
+function stopPlayback() {
+  activePlaybackSources.forEach(src => {
+    try {
+      src.onended = null;
+      src.stop();
+    } catch (e) { /* already stopped */ }
+  });
+  activePlaybackSources.clear();
+  playbackQueueEnd = 0;
+  if (speakingSelfTimer) {
+    clearTimeout(speakingSelfTimer);
+    speakingSelfTimer = null;
+  }
+  isSpeakingSelf = false;
+}
+
+// ----------------------------------------------------
+// Dialogue UI Feed (one bubble per turn / streamed segment)
+// ----------------------------------------------------
+function addSystemNote(text) {
+  const welcome = chatFeed.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  const note = document.createElement('div');
+  note.className = 'chat-system-note';
+  note.innerText = text;
+  chatFeed.appendChild(note);
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+
+function formatSec(sec) {
+  if (sec === undefined || sec === null || isNaN(sec) || sec < 0) return '0:00';
+  const totalSec = Math.floor(sec);
+  const mins = Math.floor(totalSec / 60);
+  const rem = totalSec % 60;
+  return `${mins}:${rem < 10 ? '0' : ''}${rem}`;
+}
+
+function formatTurnLatencyBadges(turn) {
+  if (!turn) return '';
+  const pills = [];
+  const total = turn.totalLatencyMs !== undefined ? turn.totalLatencyMs : turn.total_latency_ms;
+  const stt = turn.sttMs !== undefined ? turn.sttMs : turn.stt_ms;
+  const dlp = turn.dlpMs !== undefined ? turn.dlpMs : turn.dlp_ms;
+  const mt = turn.transMs !== undefined ? turn.transMs : turn.translation_ms;
+  const tts = turn.ttsMs !== undefined ? turn.ttsMs : turn.tts_ms;
+  const engine = turn.engine;
+
+  if (total !== undefined && total !== null && total > 0) {
+    pills.push(`<span class="turn-latency-pill total-pill" title="Total End-to-End Turn Latency">⚡ Total: ${Math.round(total)}ms</span>`);
+  }
+  if (stt !== undefined && stt !== null && stt > 0) {
+    pills.push(`<span class="turn-latency-pill stt-pill" title="Speech-to-Text Latency">🎙️ STT: ${Math.round(stt)}ms</span>`);
+  } else if (stt === null && (engine === 'gemini-3.8-live' || engine === 'gemini-3.5-live-translate')) {
+    pills.push(`<span class="turn-latency-pill stt-pill" title="Native Multimodal Speech Input">🎙️ STT: Native</span>`);
+  }
+  if (dlp !== undefined && dlp !== null && dlp > 0) {
+    pills.push(`<span class="turn-latency-pill dlp-pill" title="Cloud DLP PII Scrubbing Latency">🛡️ DLP: ${Math.round(dlp)}ms</span>`);
+  }
+  if (mt !== undefined && mt !== null && mt > 0) {
+    pills.push(`<span class="turn-latency-pill mt-pill" title="Translation Latency">🌐 Translate: ${Math.round(mt)}ms</span>`);
+  }
+  if (tts !== undefined && tts !== null && tts > 0) {
+    pills.push(`<span class="turn-latency-pill tts-pill" title="Text-to-Speech Synthesis Latency">🔊 TTS: ${Math.round(tts)}ms</span>`);
+  }
+  if (engine) {
+    pills.push(`<span class="turn-latency-pill">${escapeHtml(engineLabel(engine))}</span>`);
+  }
+  return pills.join('');
+}
+
+function renderBubbleLatencyRow(bubble) {
+  if (!bubble || !bubble._turnData) return;
+  let row = bubble.querySelector('.turn-latency-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'turn-latency-row';
+    bubble.appendChild(row);
+  }
+  const html = formatTurnLatencyBadges(bubble._turnData);
+  row.innerHTML = html;
+  row.style.display = html ? 'flex' : 'none';
+}
+
+function addMessageBubble(role, originalText, turnId = null, langKey = null) {
   const welcome = chatFeed.querySelector('.chat-welcome');
   if (welcome) welcome.remove();
 
   const bubble = document.createElement('div');
   bubble.className = `message-bubble ${role}`;
-  
-  const roleLabel = role === 'cast-member' 
-    ? '🇺🇸 Cast Member (English)' 
-    : (role === 'guest' 
-        ? '🌐 Guest (Spanish)' 
-        : '🎙️ Live 2-Way Ambient');
+
+  const roleLabel = roleLabelFor(role, langKey);
   const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   bubble.innerHTML = `
     <div class="message-meta">
-      <span>${roleLabel}</span>
+      <span class="bubble-role"></span>
       <span class="bubble-time">${timeStr}</span>
     </div>
-    <div class="message-text">${originalText}</div>
+    <div class="message-text"></div>
     <div class="message-translated">🔄 Translating...</div>
+    <div class="turn-latency-row" style="display:none;"></div>
   `;
+  bubble.querySelector('.bubble-role').innerText = roleLabel;
+  bubble.querySelector('.message-text').innerText = originalText;
 
   chatFeed.appendChild(bubble);
   chatFeed.scrollTop = chatFeed.scrollHeight;
   currentMessageBubble = bubble;
+  if (turnId) {
+    bubble.dataset.turnId = turnId;
+    bubblesByTurn.set(turnId, bubble);
+  }
 
   // Add turn entry into conversation tracking
   bubble._turnData = {
+    turnId,
     role,
     roleLabel,
     originalText,
     translatedText: '',
+    srcLang: langKey || (role === 'cast-member' ? getCastLang() : null),
+    tgtLang: null,
+    engine: engineSelect ? engineSelect.value : null,
     time: timeStr,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    pcmChunks: []
   };
   liveConversationTurns.push(bubble._turnData);
+  return bubble;
 }
 
-function updateSpeakerOriginalText(transcript, sttMs, sttModel, role = 'cast-member', dlpApplied = false) {
-  if (!currentMessageBubble) return;
-  const textEl = currentMessageBubble.querySelector('.message-text');
-  const metaEl = currentMessageBubble.querySelector('.message-meta span:first-child');
-  
-  if (metaEl && role) {
-    metaEl.innerText = role === 'cast-member' ? '🇺🇸 Cast Member (English)' : '🌐 Guest (Spanish)';
-    currentMessageBubble.className = `message-bubble ${role}`;
-  }
+function ensureTurnBubble(turnId, role) {
+  if (turnId && bubblesByTurn.has(turnId)) return bubblesByTurn.get(turnId);
+  if (!turnId && currentMessageBubble) return currentMessageBubble;
+  return addMessageBubble(role || currentSpeakerRole, '🎤 Listening...', turnId);
+}
 
+function dropTurnData(bubble) {
+  if (!bubble || !bubble._turnData) return;
+  bubble._turnData.dropped = true;
+  liveConversationTurns = liveConversationTurns.filter(t => t !== bubble._turnData);
+}
+
+function setBubbleInterim(bubble, transcript) {
+  if (!bubble || !transcript) return;
+  if (bubble._turnData && bubble._turnData.finalized) return;
+  const textEl = bubble.querySelector('.message-text');
   if (textEl) {
-    const latencyBadge = sttMs ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '';
-    const dlpBadge = dlpApplied ? ` <span class="badge-mini badge-dlp">🛡️ DLP Redacted</span>` : '';
-    textEl.innerHTML = `"${transcript}"${latencyBadge}${dlpBadge}`;
+    textEl.innerHTML = `<span class="interim-text">"${escapeHtml(transcript)}..."</span> <span class="badge-mini">⚡ live</span>`;
   }
-
-  if (currentMessageBubble._turnData) {
-    currentMessageBubble._turnData.originalText = transcript;
-    currentMessageBubble._turnData.role = role;
-    currentMessageBubble._turnData.sttMs = sttMs;
-    currentMessageBubble._turnData.sttModel = sttModel;
-    currentMessageBubble._turnData.dlpApplied = dlpApplied;
-  }
-
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
-function updateMessageTranslation(translatedText, glossaryApplied, transMs) {
-  if (!currentMessageBubble) return;
-  const transEl = currentMessageBubble.querySelector('.message-translated');
+function updateBubbleOriginal(bubble, opts) {
+  if (!bubble) return;
+  const { transcript, sttMs, sttModel, role, srcLang, tgtLang, detectedLang, dlpApplied, dlpScope } = opts;
+  const textEl = bubble.querySelector('.message-text');
+  const metaEl = bubble.querySelector('.bubble-role');
+
+  if (role) {
+    const label = roleLabelFor(role, srcLang);
+    if (metaEl) metaEl.innerText = label;
+    bubble.className = `message-bubble ${role}`;
+    if (bubble._turnData) bubble._turnData.roleLabel = label;
+  }
+
+  if (textEl) {
+    const latencyBadge = (sttMs !== null && sttMs !== undefined && sttMs > 0)
+      ? ` <span class="badge-mini">⚡ STT: ${Math.round(sttMs)}ms</span>` : '';
+    const dlpBadge = dlpApplied
+      ? ` <span class="badge-mini badge-dlp">🛡️ DLP Redacted${dlpScope === 'transcript_only' ? ' (transcript)' : ''}</span>` : '';
+    textEl.innerHTML = `"${escapeHtml(transcript)}"${latencyBadge}${dlpBadge}`;
+  }
+
+  if (bubble._turnData) {
+    Object.assign(bubble._turnData, {
+      originalText: transcript,
+      role: role || bubble._turnData.role,
+      srcLang: srcLang || bubble._turnData.srcLang,
+      tgtLang: tgtLang || bubble._turnData.tgtLang,
+      detectedLang,
+      sttMs,
+      sttModel,
+      dlpApplied,
+      dlpScope,
+      finalized: true
+    });
+    renderBubbleLatencyRow(bubble);
+  }
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+
+function updateBubbleTranslation(bubble, translatedText, opts = {}) {
+  if (!bubble || translatedText === undefined || translatedText === null) return;
+  const { glossaryApplied, glossaryMode, transMs, ttsMs, totalLatencyMs, tgtLang, interim, engine, model } = opts;
+  if (interim && bubble._turnData && bubble._turnData.translationFinal) return;
+  const transEl = bubble.querySelector('.message-translated');
   if (transEl) {
-    const glossaryBadge = glossaryApplied ? ' <span class="badge-mini badge-glossary">🔒 Brand Glossary Applied</span>' : '';
-    const latencyBadge = transMs ? ` <span class="badge-mini">⏱️ ${Math.round(transMs)}ms</span>` : '';
-    transEl.innerHTML = `✨ ${translatedText}${glossaryBadge}${latencyBadge}`;
+    const flag = tgtLang ? `${langMeta(tgtLang).flag} ` : '✨ ';
+    let badges = '';
+    if (interim) {
+      badges = ' <span class="badge-mini">⚡ live</span>';
+    } else {
+      if (glossaryMode === 'prompt') badges += ' <span class="badge-mini badge-glossary">🔒 Glossary (prompt)</span>';
+      else if (glossaryApplied) badges += ' <span class="badge-mini badge-glossary">🔒 Brand Glossary Applied</span>';
+      if (engine) badges += ` <span class="badge-mini">${escapeHtml(engineLabel(engine))}</span>`;
+      if (transMs) badges += ` <span class="badge-mini">⏱️ ${Math.round(transMs)}ms${engine ? ' to audio' : ''}</span>`;
+    }
+    transEl.innerHTML = `${flag}${escapeHtml(translatedText)}${badges}`;
   }
 
-  if (currentMessageBubble._turnData) {
-    currentMessageBubble._turnData.translatedText = translatedText;
-    currentMessageBubble._turnData.glossaryApplied = glossaryApplied;
-    currentMessageBubble._turnData.transMs = transMs;
+  if (bubble._turnData && !interim) {
+    Object.assign(bubble._turnData, {
+      translatedText,
+      tgtLang: tgtLang || bubble._turnData.tgtLang,
+      glossaryApplied,
+      transMs: transMs !== undefined ? transMs : bubble._turnData.transMs,
+      ttsMs: ttsMs !== undefined && ttsMs !== null ? ttsMs : bubble._turnData.ttsMs,
+      totalLatencyMs: totalLatencyMs !== undefined && totalLatencyMs !== null ? totalLatencyMs : bubble._turnData.totalLatencyMs,
+      engine: engine || bubble._turnData.engine || null,
+      translationModel: model || bubble._turnData.translationModel || null,
+      translationFinal: true
+    });
+    renderBubbleLatencyRow(bubble);
+  } else if (bubble._turnData && interim) {
+    bubble._turnData.translatedText = translatedText;
   }
-
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
@@ -1877,6 +2321,37 @@ function setupRecordedUpload() {
     }
   });
 
+  const uploadEngineSelect = document.getElementById('uploadEngineSelect');
+  const uploadEngineBadge = document.getElementById('uploadEngineBadge');
+  const uploadEngineNote = document.getElementById('uploadEngineNote');
+
+  function updateUploadEngineUI() {
+    const eng = uploadEngineSelect ? uploadEngineSelect.value : 'chirp_3';
+    if (uploadEngineBadge) {
+      if (eng === 'gemini-3.8-live') {
+        uploadEngineBadge.innerText = 'Gemini 3.8 Live (Speech-to-Speech) + DLP';
+      } else if (eng === 'gemini-3.5-transcribe') {
+        uploadEngineBadge.innerText = 'Gemini 3.5 Transcribe + DLP + MT v3 + TTS';
+      } else {
+        uploadEngineBadge.innerText = 'Cloud Chirp 3 + DLP + MT v3 + TTS';
+      }
+    }
+    if (uploadEngineNote) {
+      if (eng === 'gemini-3.8-live') {
+        uploadEngineNote.style.display = 'block';
+        uploadEngineNote.innerText = 'Gemini 3.8 Live translates speech-to-speech directly; Cloud DLP redacts transcripts only and Brand Glossary is enforced via system prompt.';
+      } else {
+        uploadEngineNote.style.display = 'none';
+        uploadEngineNote.innerText = '';
+      }
+    }
+  }
+
+  if (uploadEngineSelect) {
+    uploadEngineSelect.addEventListener('change', updateUploadEngineUI);
+    updateUploadEngineUI();
+  }
+
   if (removeSelectedFileBtn) {
     removeSelectedFileBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1900,6 +2375,11 @@ function setupRecordedUpload() {
   processUploadBtn.addEventListener('click', async () => {
     if (!selectedUploadFile) return;
 
+    const uploadEngine = uploadEngineSelect ? uploadEngineSelect.value : 'chirp_3';
+    const engineLabel = uploadEngine === 'gemini-3.8-live'
+      ? 'Gemini 3.8 Live'
+      : (uploadEngine === 'gemini-3.5-transcribe' ? 'Gemini 3.5 Transcribe' : 'Chirp 3 (Speech v2)');
+
     uploadStatusBox.style.display = 'flex';
     uploadStatusText.innerText = 'Decoding audio file and converting to 16kHz PCM...';
     processUploadBtn.disabled = true;
@@ -1911,23 +2391,26 @@ function setupRecordedUpload() {
       const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
       const audioBuf = await tempCtx.decodeAudioData(arrayBuf);
       
-      uploadStatusText.innerText = 'Resampling to 16kHz mono PCM for Chirp 3 STT...';
+      uploadStatusText.innerText = `Resampling to 16kHz mono PCM for ${engineLabel}...`;
       const pcm16 = resampleAudioBufferTo16kPcm(audioBuf);
       const base64Audio = arrayBufferToBase64(pcm16.buffer);
 
-      uploadStatusText.innerText = 'Sending to Speech-to-Text (Chirp 3) & Translation Pipeline...';
+      uploadStatusText.innerText = `Processing with ${engineLabel}: detecting languages, redacting PII and translating each utterance...`;
 
-      const langPair = document.getElementById('uploadLangPair').value;
-      const [sourceLang, targetLang] = langPair.split('-');
-      const sttModel = document.getElementById('uploadSttModel').value;
+      const castLang = document.getElementById('uploadCastLang').value;
+      const guestLang = document.getElementById('uploadGuestLang').value;
+      const smartDetect = document.getElementById('uploadSmartDetect').checked;
       const useGlossary = document.getElementById('uploadUseGlossary').checked;
       const useDlp = document.getElementById('uploadUseDlp').checked;
 
       const payload = {
         audio_base64: base64Audio,
-        source_lang: sourceLang,
-        target_lang: targetLang,
-        stt_model: sttModel,
+        engine: uploadEngine,
+        stt_model: uploadEngine,
+        cast_lang: castLang,
+        guest_lang: guestLang,
+        smart_detect: smartDetect,
+        voice: personaVoiceSelect ? personaVoiceSelect.value : 'Aoede',
         use_glossary: useGlossary,
         use_dlp: useDlp,
         dlp_info_types: Array.from(activeDlpInfoTypes)
@@ -1940,20 +2423,33 @@ function setupRecordedUpload() {
       });
 
       if (!res.ok) {
-        throw new Error(`Pipeline returned HTTP ${res.status}`);
+        let detail = '';
+        try {
+          const errBody = await res.json();
+          detail = errBody.message || (typeof errBody.detail === 'string' ? errBody.detail : '') || errBody.error || '';
+        } catch (e) { /* not JSON */ }
+        throw new Error(`Pipeline returned HTTP ${res.status}${detail ? ': ' + detail : ''}`);
       }
 
       const data = await res.json();
       currentUploadResult = {
         file_name: selectedUploadFile.name,
-        source_lang: sourceLang,
-        target_lang: targetLang,
+        engine: data.engine || uploadEngine,
+        source_lang: data.cast_lang || castLang,
+        target_lang: data.guest_lang || guestLang,
+        cast_lang: data.cast_lang || castLang,
+        guest_lang: data.guest_lang || guestLang,
+        detected_guest_lang: data.detected_guest_lang || null,
+        detected_guest_label: data.detected_guest_label || null,
+        segments: data.segments || [],
         original_transcript: (data.stt && data.stt.transcript) || '',
         sanitized_transcript: (data.dlp && data.dlp.sanitized_text) || (data.stt && data.stt.transcript) || '',
         translated_text: (data.translation && data.translation.translated_text) || '',
         audio_base64: (data.tts && data.tts.audio_base64) || '',
         stt_ms: data.stt ? data.stt.latency_ms : 0,
+        stt_model: data.stt ? data.stt.stt_model : engineLabel,
         dlp_ms: data.dlp ? data.dlp.latency_ms : 0,
+        dlp_scope: (data.dlp && data.dlp.dlp_scope) || 'full',
         translation_ms: data.translation ? data.translation.latency_ms : 0,
         tts_ms: data.tts ? data.tts.latency_ms : 0,
         total_latency_ms: data.total_latency_ms || 0,
@@ -1964,7 +2460,7 @@ function setupRecordedUpload() {
       renderUploadResults(currentUploadResult);
       uploadStatusBox.style.display = 'none';
       processUploadBtn.disabled = false;
-      addTerminalLog(`[Recorded Upload] Processed "${selectedUploadFile.name}": "${currentUploadResult.original_transcript}" ➔ "${currentUploadResult.translated_text}"`, 'mt');
+      addTerminalLog(`[Recorded Upload | ${currentUploadResult.stt_model}] Processed "${selectedUploadFile.name}": ${currentUploadResult.segments.length} segment(s)${currentUploadResult.detected_guest_label ? ', guest language detected: ' + currentUploadResult.detected_guest_label : ''}`, 'mt');
     } catch (err) {
       console.error('Error processing audio upload:', err);
       uploadStatusBox.style.display = 'none';
@@ -1976,14 +2472,7 @@ function setupRecordedUpload() {
   if (downloadUploadTranscriptBtn) {
     downloadUploadTranscriptBtn.addEventListener('click', () => {
       if (!currentUploadResult) return;
-      const turns = [{
-        role: 'speaker',
-        roleLabel: `Original Audio (${currentUploadResult.source_lang.toUpperCase()})`,
-        originalText: currentUploadResult.original_transcript,
-        translatedText: currentUploadResult.translated_text,
-        time: new Date().toLocaleTimeString(),
-        timestamp: Date.now()
-      }];
+      const turns = uploadResultTurns(currentUploadResult);
       downloadTranscriptFile(turns, `upload_${currentUploadResult.file_name}_transcript`);
     });
   }
@@ -2020,14 +2509,15 @@ function renderUploadResults(result) {
 
   if (origEl) origEl.innerText = result.original_transcript || '(No speech detected)';
   if (transEl) transEl.innerText = result.translated_text || '(Translation pending)';
-  if (sttLat) sttLat.innerText = `${Math.round(result.stt_ms)} ms`;
+  if (sttLat) sttLat.innerText = `${result.stt_model ? result.stt_model + ' • ' : ''}${Math.round(result.stt_ms)} ms`;
   if (mtLat) mtLat.innerText = `${Math.round(result.translation_ms + result.tts_ms)} ms`;
 
   if (dlpMeta) {
+    const scopeNote = result.dlp_scope === 'transcript_only' ? ' (transcript only)' : '';
     if (result.dlp_findings && result.dlp_findings.length > 0) {
-      dlpMeta.innerHTML = `<span style="color:#ff8a80">⚠️ Cloud DLP Redacted:</span> ${result.dlp_findings.map(f => f.displayName || f.infoType).join(', ')}`;
+      dlpMeta.innerHTML = `<span style="color:#ff8a80">⚠️ Cloud DLP Redacted${scopeNote}:</span> ${result.dlp_findings.map(f => f.displayName || f.infoType).join(', ')}`;
     } else {
-      dlpMeta.innerText = '🛡️ Cloud DLP: Clean (No PII detected)';
+      dlpMeta.innerText = `🛡️ Cloud DLP${scopeNote}: Clean (No PII detected)`;
     }
   }
 
@@ -2036,6 +2526,128 @@ function renderUploadResults(result) {
     player.src = URL.createObjectURL(wavBlob);
     player.load();
   }
+
+  // Detected guest language badge
+  const detectedEl = document.getElementById('uploadDetectedGuest');
+  if (detectedEl) {
+    if (result.detected_guest_label) {
+      detectedEl.innerText = `Guest detected: ${result.detected_guest_label}`;
+      detectedEl.style.display = 'inline-flex';
+    } else {
+      detectedEl.style.display = 'none';
+    }
+  }
+
+  // Per-utterance breakdown with per-turn latency pills and click-to-seek playback
+  const list = document.getElementById('uploadSegmentsList');
+  if (list) {
+    const segments = result.segments || [];
+    if (segments.length === 0) {
+      list.innerHTML = '<div class="upload-segment-empty">No utterances detected.</div>';
+    } else {
+      list.innerHTML = '';
+      const segmentCards = [];
+      segments.forEach((seg, idx) => {
+        const src = langMeta(seg.src_lang);
+        const tgt = langMeta(seg.tgt_lang);
+        const hasAudioSpan = seg.audio_start_s !== undefined && seg.audio_end_s !== undefined && seg.audio_end_s > seg.audio_start_s;
+        const card = document.createElement('div');
+        card.className = `upload-segment ${seg.role}${hasAudioSpan ? ' clickable-turn' : ''}`;
+        const playBadgeHtml = hasAudioSpan
+          ? `<span class="turn-play-badge" title="Click turn to play this segment">▶ ${formatSec(seg.audio_start_s)} – ${formatSec(seg.audio_end_s)}</span>`
+          : '';
+        const latencyHtml = formatTurnLatencyBadges(seg);
+        card.innerHTML = `
+          <div class="upload-segment-meta">
+            <span class="upload-segment-role"></span>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${playBadgeHtml}
+              <span class="upload-segment-dir">${src.flag} ${escapeHtml(src.label)} → ${tgt.flag} ${escapeHtml(tgt.label)}</span>
+            </div>
+          </div>
+          <div class="upload-segment-original"></div>
+          <div class="upload-segment-translated"></div>
+          ${latencyHtml ? `<div class="turn-latency-row">${latencyHtml}</div>` : ''}
+        `;
+        card.querySelector('.upload-segment-role').innerText =
+          `${idx + 1}. ${seg.role === 'cast-member' ? 'Cast Member' : 'Guest'}${seg.dlp_applied ? ' • DLP redacted' : ''}${seg.glossary_applied ? ' • Glossary' : ''}`;
+        card.querySelector('.upload-segment-original').innerText = seg.sanitized_transcript || seg.transcript || '';
+        card.querySelector('.upload-segment-translated').innerText = seg.translated_text || '';
+
+        if (hasAudioSpan && player) {
+          card.addEventListener('click', () => {
+            segmentCards.forEach(c => c.classList.remove('active-playing-turn'));
+            card.classList.add('active-playing-turn');
+            player.currentTime = seg.audio_start_s;
+            player.play().catch(() => {});
+          });
+        }
+        segmentCards.push(card);
+        list.appendChild(card);
+      });
+
+      if (player) {
+        player.ontimeupdate = () => {
+          const t = player.currentTime;
+          segments.forEach((seg, idx) => {
+            const c = segmentCards[idx];
+            if (!c) return;
+            const active = !player.paused && seg.audio_start_s !== undefined && seg.audio_end_s !== undefined &&
+              t >= seg.audio_start_s && t <= seg.audio_end_s + 0.08;
+            c.classList.toggle('active-playing-turn', active);
+          });
+        };
+        player.onended = () => {
+          segmentCards.forEach(c => c.classList.remove('active-playing-turn'));
+        };
+      }
+    }
+  }
+}
+
+// Build transcript turns (one per utterance) from an upload result
+function uploadResultTurns(result) {
+  const now = new Date().toLocaleTimeString();
+  const segments = result.segments || [];
+  if (segments.length === 0) {
+    return [{
+      role: 'recorded-file',
+      roleLabel: `Uploaded Audio (${result.file_name})`,
+      originalText: result.original_transcript,
+      translatedText: result.translated_text,
+      sttMs: result.stt_ms,
+      dlpMs: result.dlp_ms,
+      transMs: result.translation_ms,
+      ttsMs: result.tts_ms,
+      totalLatencyMs: result.total_latency_ms,
+      sttModel: result.stt_model,
+      time: now,
+      timestamp: Date.now()
+    }];
+  }
+  return segments.map(seg => ({
+    role: seg.role,
+    roleLabel: `${roleLabelFor(seg.role, seg.src_lang)} → ${langMeta(seg.tgt_lang).label}`,
+    originalText: seg.sanitized_transcript || seg.transcript,
+    translatedText: seg.translated_text,
+    srcLang: seg.src_lang,
+    tgtLang: seg.tgt_lang,
+    detectedLang: seg.detected_lang,
+    dlpApplied: seg.dlp_applied,
+    glossaryApplied: seg.glossary_applied,
+    sttMs: seg.stt_ms,
+    dlpMs: seg.dlp_ms,
+    transMs: seg.translation_ms,
+    ttsMs: seg.tts_ms,
+    totalLatencyMs: seg.total_latency_ms,
+    sttModel: seg.stt_model || result.stt_model,
+    engine: seg.engine || (engineSelect ? engineSelect.value : null),
+    translationModel: seg.model || null,
+    audioStartSec: seg.audio_start_s,
+    audioEndSec: seg.audio_end_s,
+    time: now,
+    timestamp: Date.now()
+  }));
 }
 
 // Convert AudioBuffer to 16kHz Mono Int16Array PCM
@@ -2072,6 +2684,17 @@ function resampleAudioBufferTo16kPcm(audioBuffer) {
 // ----------------------------------------------------
 // Past Conversations & Saved Transcripts
 // ----------------------------------------------------
+function stopModalAudioPlayer() {
+  const audioEl = document.getElementById('modalAudioElement');
+  const playBtn = document.getElementById('modalPlayPauseBtn');
+  if (audioEl) {
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.load();
+  }
+  if (playBtn) playBtn.innerText = '▶';
+}
+
 function setupPastConversations() {
   const refreshBtn = document.getElementById('refreshConversationsBtn');
   const searchInput = document.getElementById('conversationsSearchInput');
@@ -2099,10 +2722,14 @@ function setupPastConversations() {
 
   if (closeBtn && modal) {
     closeBtn.addEventListener('click', () => {
+      stopModalAudioPlayer();
       modal.style.display = 'none';
     });
     modal.addEventListener('click', (e) => {
-      if (e.target === modal) modal.style.display = 'none';
+      if (e.target === modal) {
+        stopModalAudioPlayer();
+        modal.style.display = 'none';
+      }
     });
   }
 }
@@ -2158,7 +2785,8 @@ function filterAndRenderConversations() {
     card.className = 'conversation-card';
     const dateFormatted = new Date(conv.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     const isLive = conv.mode === 'live';
-    const langFlag = conv.targetLang === 'es' ? '🇲🇽' : '🌐';
+    const srcMeta = langMeta(conv.sourceLang);
+    const tgtMeta = langMeta(conv.targetLang);
 
     card.innerHTML = `
       <div class="conv-card-left">
@@ -2169,7 +2797,7 @@ function filterAndRenderConversations() {
         <div class="conv-meta">
           <span>📅 ${dateFormatted}</span>
           <span>💬 ${conv.turnCount || 1} Turn(s)</span>
-          <span>${conv.sourceLang.toUpperCase()} ➔ ${langFlag} ${conv.targetLang.toUpperCase()}</span>
+          <span>${srcMeta.flag} ${escapeHtml(srcMeta.label)} ⇄ ${tgtMeta.flag} ${escapeHtml(tgtMeta.label)}</span>
           ${conv.hasAudio ? '<span>🔊 Audio Saved</span>' : ''}
         </div>
       </div>
@@ -2188,6 +2816,35 @@ function filterAndRenderConversations() {
   });
 }
 
+function pcmChunksListToWavBlob(pcmChunksList) {
+  if (!pcmChunksList || pcmChunksList.length === 0) return null;
+  const sampleRate = pcmChunksList[0].sampleRate || 24000;
+  const arrays = [];
+  let totalLength = 0;
+
+  for (const item of pcmChunksList) {
+    const b64 = item.pcmBase64 || item;
+    if (!b64) continue;
+    const binary = window.atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const int16 = new Int16Array(bytes.buffer);
+    arrays.push(int16);
+    totalLength += int16.length;
+  }
+  if (totalLength === 0) return null;
+
+  const mergedInt16 = new Int16Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    mergedInt16.set(arr, offset);
+    offset += arr.length;
+  }
+  return int16ToWavBlob(mergedInt16, sampleRate);
+}
+
 async function openConversationDetails(convId) {
   const modal = document.getElementById('conversationModal');
   const titleEl = document.getElementById('modalConvTitle');
@@ -2196,8 +2853,17 @@ async function openConversationDetails(convId) {
   const downloadTransBtn = document.getElementById('modalDownloadTranscriptBtn');
   const downloadAudioBtn = document.getElementById('modalDownloadAudioBtn');
   const deleteBtn = document.getElementById('modalDeleteConvBtn');
+  const playerBar = document.getElementById('modalAudioPlayerBar');
+  const playPauseBtn = document.getElementById('modalPlayPauseBtn');
+  const scrubber = document.getElementById('modalTimelineScrubber');
+  const markersEl = document.getElementById('modalTimelineMarkers');
+  const timeDisplay = document.getElementById('modalTimeDisplay');
+  const activeTurnLabel = document.getElementById('modalActiveTurnLabel');
+  const audioEl = document.getElementById('modalAudioElement');
 
   if (!modal) return;
+  stopModalAudioPlayer();
+  if (playerBar) playerBar.style.display = 'none';
   modal.style.display = 'flex';
   container.innerHTML = '<div style="padding:20px; text-align:center; color:#94a3b8;">Loading conversation...</div>';
 
@@ -2209,19 +2875,47 @@ async function openConversationDetails(convId) {
     titleEl.innerText = conv.title || 'Conversation Details';
     dateEl.innerText = `Recorded: ${new Date(conv.createdAt).toLocaleString()}`;
 
-    // Render turns
-    container.innerHTML = '';
     const turns = conv.turns || [];
+    // Gather audio chunks
+    const pcmList = [];
+    if (conv.metadata && conv.metadata.synthesizedPcmChunks) {
+      pcmList.push(...conv.metadata.synthesizedPcmChunks);
+    }
+    turns.forEach(t => {
+      if (t.audioBase64) pcmList.push({ pcmBase64: t.audioBase64, sampleRate: 24000 });
+    });
+
+    const wavBlob = pcmChunksListToWavBlob(pcmList);
+    const hasAudio = !!wavBlob;
+
+    // Render turns with per-turn latency metrics & click-to-seek badges
+    container.innerHTML = '';
+    const turnCards = [];
     if (turns.length === 0) {
       container.innerHTML = '<div style="color:#94a3b8; padding: 10px;">No dialogue turns saved.</div>';
     } else {
       turns.forEach((turn, idx) => {
         const turnCard = document.createElement('div');
-        turnCard.className = 'modal-turn-card';
+        turnCard.className = `modal-turn-card${hasAudio ? ' clickable-turn' : ''}`;
+        turnCard.dataset.turnIdx = String(idx);
+        const startS = turn.audioStartSec !== undefined ? turn.audioStartSec : turn.audio_start_s;
+        const endS = turn.audioEndSec !== undefined ? turn.audioEndSec : turn.audio_end_s;
+        const hasSpan = startS !== undefined && endS !== undefined && endS > startS;
+        const playBadgeText = hasSpan
+          ? `▶ ${formatSec(startS)} – ${formatSec(endS)}`
+          : (hasAudio ? `▶ Play Turn ${idx + 1}` : '');
+        const playBadgeHtml = playBadgeText
+          ? `<span class="turn-play-badge" data-badge-idx="${idx}" title="Click to jump to Turn ${idx + 1} in the audio">${playBadgeText}</span>`
+          : '';
+        const latencyHtml = formatTurnLatencyBadges(turn);
+
         turnCard.innerHTML = `
           <div class="modal-turn-header">
             <span><strong>Turn ${idx + 1}</strong> • ${escapeHtml(turn.roleLabel || turn.role || 'Speaker')}</span>
-            <span>${turn.time || ''}</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${playBadgeHtml}
+              <span>${turn.time || ''}</span>
+            </div>
           </div>
           <div class="modal-turn-original">
             <strong>Original:</strong> "${escapeHtml(turn.originalText || '')}"
@@ -2229,9 +2923,172 @@ async function openConversationDetails(convId) {
           <div class="modal-turn-translated">
             <strong>Translated:</strong> "${escapeHtml(turn.translatedText || '')}"
           </div>
+          ${latencyHtml ? `<div class="turn-latency-row">${latencyHtml}</div>` : ''}
         `;
+        turnCards.push(turnCard);
         container.appendChild(turnCard);
       });
+    }
+
+    // Configure interactive timeline scrubber + turn sync if audio is present
+    if (hasAudio && playerBar && audioEl && scrubber && playPauseBtn) {
+      playerBar.style.display = 'flex';
+      const audioUrl = URL.createObjectURL(wavBlob);
+      audioEl.src = audioUrl;
+      audioEl.load();
+      playPauseBtn.innerText = '▶';
+      scrubber.value = '0';
+      if (activeTurnLabel) activeTurnLabel.innerText = 'Click any turn card or press Play';
+
+      const getTurnBounds = (turn) => {
+        const s = turn.audioStartSec !== undefined ? turn.audioStartSec : turn.audio_start_s;
+        const e = turn.audioEndSec !== undefined ? turn.audioEndSec : turn.audio_end_s;
+        return { start: s, end: e };
+      };
+
+      const seekToTurn = (idx, autoPlay = true) => {
+        const turn = turns[idx];
+        if (!turn) return;
+        const { start } = getTurnBounds(turn);
+        if (start !== undefined && !isNaN(start)) {
+          audioEl.currentTime = start;
+          scrubber.value = String(start);
+        }
+        highlightActiveTurn(idx, true);
+        if (autoPlay) {
+          audioEl.play().catch(() => {});
+        }
+      };
+
+      const highlightActiveTurn = (activeIdx, scrollIntoView = false) => {
+        turnCards.forEach((card, i) => {
+          const isMatch = i === activeIdx;
+          card.classList.toggle('active-playing-turn', isMatch);
+          if (isMatch && scrollIntoView) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
+        if (markersEl) {
+          const markerDots = markersEl.querySelectorAll('.modal-timeline-marker');
+          markerDots.forEach((m, i) => m.classList.toggle('active', i === activeIdx));
+        }
+        if (activeTurnLabel) {
+          if (activeIdx >= 0 && turns[activeIdx]) {
+            const t = turns[activeIdx];
+            activeTurnLabel.innerText = `Playing Turn ${activeIdx + 1}/${turns.length} • ${t.roleLabel || t.role || 'Speaker'}`;
+          } else if (audioEl.paused) {
+            activeTurnLabel.innerText = 'Paused • Click any turn or scrub timeline';
+          }
+        }
+      };
+
+      turnCards.forEach((card, idx) => {
+        card.addEventListener('click', () => seekToTurn(idx, true));
+      });
+
+      audioEl.onloadedmetadata = () => {
+        const dur = audioEl.duration || 0;
+        scrubber.max = String(dur > 0 ? dur : 1);
+        if (timeDisplay) timeDisplay.innerText = `0:00 / ${formatSec(dur)}`;
+
+        // If turns don't have saved audioStartSec/audioEndSec (e.g. older saved conversations),
+        // estimate proportional spans across the audio duration so scrubbing & click-to-seek work.
+        const anyHasSpan = turns.some(t => {
+          const { start, end } = getTurnBounds(t);
+          return start !== undefined && end !== undefined && end > start;
+        });
+        if (!anyHasSpan && dur > 0 && turns.length > 0) {
+          const weights = turns.map(t => Math.max(8, (t.translatedText || t.originalText || '').length));
+          const totalWeight = weights.reduce((a, b) => a + b, 0);
+          let cursor = 0;
+          turns.forEach((t, idx) => {
+            const span = (weights[idx] / totalWeight) * dur;
+            t.audioStartSec = Number(cursor.toFixed(2));
+            t.audioEndSec = Number(Math.min(dur, cursor + span).toFixed(2));
+            cursor += span;
+            const badge = turnCards[idx] && turnCards[idx].querySelector('.turn-play-badge');
+            if (badge) {
+              badge.innerText = `▶ ${formatSec(t.audioStartSec)} – ${formatSec(t.audioEndSec)}`;
+            }
+          });
+        }
+
+        // Render turn markers along the timeline scrubber
+        if (markersEl && dur > 0) {
+          markersEl.innerHTML = '';
+          turns.forEach((t, idx) => {
+            const { start, end } = getTurnBounds(t);
+            if (start === undefined || end === undefined || end <= start) return;
+            const leftPct = Math.max(0, Math.min(100, (start / dur) * 100));
+            const widthPct = Math.max(1.5, Math.min(100 - leftPct, ((end - start) / dur) * 100));
+            const marker = document.createElement('div');
+            marker.className = `modal-timeline-marker ${t.role === 'cast-member' ? 'cast-member' : 'guest'}`;
+            marker.style.left = `${leftPct}%`;
+            marker.style.width = `${widthPct}%`;
+            marker.title = `Turn ${idx + 1}: ${t.roleLabel || t.role} (${formatSec(start)} – ${formatSec(end)})`;
+            marker.addEventListener('click', (e) => {
+              e.stopPropagation();
+              seekToTurn(idx, true);
+            });
+            markersEl.appendChild(marker);
+          });
+        }
+      };
+
+      playPauseBtn.onclick = () => {
+        if (audioEl.paused) {
+          audioEl.play().catch(() => {});
+        } else {
+          audioEl.pause();
+        }
+      };
+
+      audioEl.onplay = () => {
+        playPauseBtn.innerText = '⏸';
+      };
+
+      audioEl.onpause = () => {
+        playPauseBtn.innerText = '▶';
+      };
+
+      audioEl.ontimeupdate = () => {
+        const cur = audioEl.currentTime || 0;
+        const dur = audioEl.duration || 0;
+        scrubber.value = String(cur);
+        if (timeDisplay) timeDisplay.innerText = `${formatSec(cur)} / ${formatSec(dur)}`;
+
+        let activeIdx = -1;
+        for (let i = 0; i < turns.length; i++) {
+          const { start, end } = getTurnBounds(turns[i]);
+          if (start !== undefined && end !== undefined && cur >= start && cur <= end + 0.15) {
+            activeIdx = i;
+            break;
+          }
+        }
+        highlightActiveTurn(activeIdx, !audioEl.paused);
+      };
+
+      scrubber.oninput = () => {
+        const targetTime = parseFloat(scrubber.value) || 0;
+        audioEl.currentTime = targetTime;
+        const dur = audioEl.duration || 0;
+        if (timeDisplay) timeDisplay.innerText = `${formatSec(targetTime)} / ${formatSec(dur)}`;
+        let activeIdx = -1;
+        for (let i = 0; i < turns.length; i++) {
+          const { start, end } = getTurnBounds(turns[i]);
+          if (start !== undefined && end !== undefined && targetTime >= start && targetTime <= end + 0.15) {
+            activeIdx = i;
+            break;
+          }
+        }
+        highlightActiveTurn(activeIdx, true);
+      };
+
+      audioEl.onended = () => {
+        playPauseBtn.innerText = '▶';
+        highlightActiveTurn(-1, false);
+        if (activeTurnLabel) activeTurnLabel.innerText = 'Playback finished • Click any turn to replay';
+      };
     }
 
     // Modal action buttons
@@ -2240,15 +3097,6 @@ async function openConversationDetails(convId) {
     };
 
     downloadAudioBtn.onclick = () => {
-      // Gather audio chunks
-      const pcmList = [];
-      if (conv.metadata && conv.metadata.synthesizedPcmChunks) {
-        pcmList.push(...conv.metadata.synthesizedPcmChunks);
-      }
-      turns.forEach(t => {
-        if (t.audioBase64) pcmList.push({ pcmBase64: t.audioBase64, sampleRate: 24000 });
-      });
-
       if (pcmList.length === 0) {
         alert('No synthesized audio chunks were saved with this conversation.');
         return;
@@ -2258,6 +3106,7 @@ async function openConversationDetails(convId) {
 
     deleteBtn.onclick = async () => {
       if (confirm(`Are you sure you want to delete "${conv.title}"?`)) {
+        stopModalAudioPlayer();
         await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
         modal.style.display = 'none';
         await loadPastConversations();
@@ -2283,15 +3132,57 @@ async function saveCurrentLiveConversation() {
   const title = prompt('Enter a title for this conversation:', `Live Dialogue (${new Date().toLocaleTimeString()})`);
   if (!title) return;
 
+  // Build combined PCM audio with 0.30s inter-turn silence and compute exact per-turn audioStartSec / audioEndSec
+  const combinedPcmChunks = [];
+  const silenceSamples = new Int16Array(Math.floor(24000 * 0.30));
+  const silenceBytes = new Uint8Array(silenceSamples.buffer);
+  let silenceBinary = '';
+  for (let i = 0; i < silenceBytes.length; i++) {
+    silenceBinary += String.fromCharCode(silenceBytes[i]);
+  }
+  const silenceBase64 = window.btoa(silenceBinary);
+
+  let audioCursorSec = 0.0;
+  const serializedTurns = liveConversationTurns.map((t) => {
+    const turnCopy = Object.assign({}, t);
+    delete turnCopy.pcmChunks;
+    const chunks = t.pcmChunks || [];
+    if (chunks.length > 0) {
+      let turnSamples = 0;
+      const sr = chunks[0].sampleRate || 24000;
+      chunks.forEach(c => {
+        const b64 = c.pcmBase64 || '';
+        const byteLen = Math.floor((b64.length * 3) / 4);
+        turnSamples += Math.floor(byteLen / 2);
+        combinedPcmChunks.push({ pcmBase64: b64, sampleRate: sr });
+      });
+      const turnDurSec = turnSamples / sr;
+      turnCopy.audioStartSec = Number(audioCursorSec.toFixed(2));
+      turnCopy.audioEndSec = Number((audioCursorSec + turnDurSec).toFixed(2));
+      audioCursorSec += turnDurSec;
+      // Add a 0.30s pause between turns
+      combinedPcmChunks.push({ pcmBase64: silenceBase64, sampleRate: sr });
+      audioCursorSec += 0.30;
+    }
+    return turnCopy;
+  });
+
+  const finalPcmChunks = combinedPcmChunks.length > 0 ? combinedPcmChunks : liveSynthesizedPcmChunks;
+
   const payload = {
     title: title.trim(),
     sourceLang: src,
     targetLang: tgt,
     mode: 'live',
-    turns: liveConversationTurns,
+    turns: serializedTurns,
     metadata: {
-      totalTurns: liveConversationTurns.length,
-      synthesizedPcmChunks: liveSynthesizedPcmChunks
+      totalTurns: serializedTurns.length,
+      castLang: src,
+      guestLang: tgt,
+      guestLangDetected: !!detectedGuestLang,
+      smartDetect: smartDetectToggle.checked,
+      engine: engineSelect.value,
+      synthesizedPcmChunks: finalPcmChunks
     }
   };
 
@@ -2303,7 +3194,7 @@ async function saveCurrentLiveConversation() {
     });
     if (res.ok) {
       alert('Conversation and transcript successfully saved to "Past Conversations" tab!');
-      addTerminalLog(`Saved live conversation: "${title}" (${liveConversationTurns.length} turns).`, 'system');
+      addTerminalLog(`Saved live conversation: "${title}" (${serializedTurns.length} turns).`, 'system');
     } else {
       alert('Failed to save conversation.');
     }
@@ -2318,25 +3209,21 @@ async function saveCurrentUploadConversation() {
   const title = prompt('Enter a title for this recorded conversation:', `Upload: ${currentUploadResult.file_name}`);
   if (!title) return;
 
-  const turns = [{
-    role: 'recorded-file',
-    roleLabel: `Uploaded Audio (${currentUploadResult.file_name})`,
-    originalText: currentUploadResult.original_transcript,
-    translatedText: currentUploadResult.translated_text,
-    audioBase64: currentUploadResult.audio_base64,
-    time: new Date().toLocaleTimeString(),
-    timestamp: Date.now()
-  }];
+  const turns = uploadResultTurns(currentUploadResult);
 
   const payload = {
     title: title.trim(),
-    sourceLang: currentUploadResult.source_lang,
-    targetLang: currentUploadResult.target_lang,
+    sourceLang: currentUploadResult.cast_lang || currentUploadResult.source_lang,
+    targetLang: currentUploadResult.guest_lang || currentUploadResult.target_lang,
     mode: 'recorded-upload',
     turns,
     metadata: {
       fileName: currentUploadResult.file_name,
-      totalLatencyMs: currentUploadResult.total_latency_ms
+      totalLatencyMs: currentUploadResult.total_latency_ms,
+      detectedGuestLang: currentUploadResult.detected_guest_lang,
+      synthesizedPcmChunks: currentUploadResult.audio_base64
+        ? [{ pcmBase64: currentUploadResult.audio_base64, sampleRate: 24000 }]
+        : []
     }
   };
 
@@ -2376,6 +3263,18 @@ function downloadTranscriptFile(turns, baseFilename = 'conversation_transcript')
     textContent += `[Turn ${idx + 1}] ${turn.time || ''} - ${turn.roleLabel || turn.role || 'Speaker'}\n`;
     textContent += `Original:   ${turn.originalText || ''}\n`;
     textContent += `Translated: ${turn.translatedText || ''}\n`;
+    const total = turn.totalLatencyMs !== undefined ? turn.totalLatencyMs : turn.total_latency_ms;
+    const stt = turn.sttMs !== undefined ? turn.sttMs : turn.stt_ms;
+    const dlp = turn.dlpMs !== undefined ? turn.dlpMs : turn.dlp_ms;
+    const mt = turn.transMs !== undefined ? turn.transMs : turn.translation_ms;
+    const tts = turn.ttsMs !== undefined ? turn.ttsMs : turn.tts_ms;
+    const latParts = [];
+    if (total !== undefined && total !== null) latParts.push(`Total: ${Math.round(total)}ms`);
+    if (stt !== undefined && stt !== null) latParts.push(`STT: ${Math.round(stt)}ms`);
+    if (dlp !== undefined && dlp !== null) latParts.push(`DLP: ${Math.round(dlp)}ms`);
+    if (mt !== undefined && mt !== null) latParts.push(`Translate: ${Math.round(mt)}ms`);
+    if (tts !== undefined && tts !== null) latParts.push(`TTS: ${Math.round(tts)}ms`);
+    if (latParts.length > 0) textContent += `Latency:    ${latParts.join(' | ')}\n`;
     if (turn.sttModel) textContent += `STT Model:  ${turn.sttModel}\n`;
     if (turn.dlpApplied) textContent += `Cloud DLP:  Sanitized / Masked\n`;
     textContent += `----------------------------------------------------\n\n`;
