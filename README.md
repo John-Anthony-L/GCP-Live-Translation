@@ -394,22 +394,6 @@ In the web interface at `http://localhost:3000`:
 
 ---
 
-## Engineering Team Transition & Backward Compatibility Guide
+## Changelog
 
-For engineers already familiar with the earlier commit (`61955be`), all existing REST endpoints, WebSocket payloads, and Python classes remain backward-compatible while adding the new engines, Cast/Guest language anchor, Recorded Upload, and Past Conversations features:
-
-1. **Removed Unused `services/gemini-live-proxy/`**:
-   - The legacy standalone Node.js `gemini-live-proxy` container (which wasn't wired into Cloud Run or the main pipeline) has been removed. All 4 engines (`chirp_3`, `gemini-3.5-transcribe`, `gemini-3.5-live-translate`, `gemini-3.8-live`) now run inside `services/translation-pipeline` over the single `/ws/stream-translate` WebSocket.
-2. **Module Layout in `services/translation-pipeline/`**:
-   - `main.py` had grown large when adding the two speech-to-speech Gemini Live engines, so the streaming workers were extracted into `live_workers.py` and the language catalog into `languages.py`.
-   - **Backward-compatible exports in `main.py` & `pipeline.py`**:
-     - `StreamingSTTWorker` (alias of `Chirp3StreamWorker`), `GeminiLiveTranscribeWorker` (alias of `GeminiTranscribeWorker`), `create_stream_worker(...)`, and `resolve_locale(...)` are still exported directly from `main.py` and accept both the original keyword arguments (`websocket`, `src_lang`, `tgt_lang`, `speaker_role`, `stt_model`) and the new `SessionState` signature.
-     - `DisneyTranslationPipeline` (alias of `LiveTranslationPipeline`), `transcribe_audio(...)`, `get_streaming_config(...)`, and `run_full_pipeline(...)` are preserved on `pipeline.py`.
-     - Cloud Translation v3 automatically checks both `brand-parks-glossary-*` and legacy `disney-parks-glossary-*` IDs.
-3. **Model & Endpoint Requirements**:
-   - **Chirp 3 (`chirp_3`)**: Uses **Cloud Speech-to-Text V2** (`us-speech.googleapis.com`, recognizer `projects/{PROJECT_ID}/locations/us/recognizers/_`). Requires `roles/speech.client` on the Cloud Run service account (now granted automatically by `infra/deploy.sh`). Note that Speech V2 only allows `adaptation` (`biasing_phrases`) when a single explicit locale is passed (e.g., `["en-US"]`), so `adaptation` is automatically omitted when `language_codes=["auto"]` (Smart Guest Language Detection) is active.
-   - **Gemini 3.5 Live Transcribe (`gemini-3.5-transcribe-live-preview`)**: Hosted on Vertex AI in **`location="global"`** (`GEMINI_TRANSCRIBE_LOCATION=global`).
-   - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`)**: Hosted on Vertex AI in **`location="global"`** (`GEMINI_LIVE_TRANSLATE_LOCATION=global`), push-to-talk only.
-   - **Gemini 3.8 Live (`gemini-3.8-live`)**: Hosted on Vertex AI in **`location="us-central1"`** (`GEMINI_LIVE_LOCATION=us-central1`).
-
-
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release history
