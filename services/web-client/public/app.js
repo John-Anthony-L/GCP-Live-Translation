@@ -58,7 +58,7 @@ const ENGINE_INFO = {
   'gemini-3.5-live-translate': { label: 'Gemini 3.5 Live Translate', speechToSpeech: true, pttOnly: true,
     note: 'Speech-to-speech, push-to-talk only. DLP applies to transcripts only; brand glossary is not supported.' },
   'gemini-3.8-live': { label: 'Gemini 3.8 Live', speechToSpeech: true, pttOnly: false,
-    note: 'Speech-to-speech interpreter. DLP applies to transcripts only; glossary is applied via the system prompt.' }
+    note: 'Speech-to-speech interpreter. DLP redacts spoken audio via system prompt + scrubs transcripts via Cloud DLP; brand glossary is applied via system prompt.' }
 };
 
 function langMeta(code) {
@@ -1036,7 +1036,9 @@ function handleServerEvent(data) {
           renderBubbleLatencyRow(b);
         }
       }
-      const scope = data.dlp_scope === 'transcript_only' ? ' (transcript only)' : '';
+      const scope = data.dlp_scope === 'transcript_only'
+        ? ' (transcript only)'
+        : (data.dlp_scope === 'prompt_and_transcript' ? ' (prompt + transcript)' : '');
       const findings = data.findings || [];
       if (dlpMetricSub) {
         dlpMetricSub.innerText = data.pii_detected
@@ -1047,7 +1049,11 @@ function handleServerEvent(data) {
         if (data.pii_detected) {
           terminalDlpText.innerHTML = `⚠️ <span style="color:#ff8a80">PII Scrubbed:</span> "${escapeHtml(data.sanitized_text)}"`;
           terminalDlpMeta.innerText = `${findings.length} Findings • ${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
-          const where = data.dlp_scope === 'transcript_only' ? 'in transcripts (spoken audio is not redacted)' : 'before translation and speech';
+          const where = data.dlp_scope === 'transcript_only'
+            ? 'in transcripts (spoken audio is not redacted)'
+            : (data.dlp_scope === 'prompt_and_transcript'
+              ? 'via system prompt (spoken audio) + Cloud DLP (transcripts)'
+              : 'before translation and speech');
           addTerminalLog(`[DLP MASKED] ${findings.map(f => f.infoType ? (f.displayName || f.infoType) : f).join(', ')} redacted ${where} (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
         } else {
           terminalDlpText.innerText = data.dlp_enabled ? `🛡️ Clean (No PII Detected)` : `⚠️ DLP Bypassed (Raw)`;

@@ -330,7 +330,7 @@ async def translate_audio(req: AudioTranslateRequest):
                 "transcript": inp_text,
                 "sanitized_transcript": dlp_in["sanitized_text"],
                 "dlp_applied": dlp_in["pii_detected"] or dlp_out["pii_detected"],
-                "dlp_scope": "transcript_only",
+                "dlp_scope": "prompt_and_transcript" if state.use_dlp else "transcript_only",
                 "translated_text": dlp_out["sanitized_text"],
                 "glossary_applied": bool(state.use_glossary),
                 "glossary_mode": "prompt" if state.use_glossary else "none",
@@ -364,7 +364,7 @@ async def translate_audio(req: AudioTranslateRequest):
             "dlp": {
                 "sanitized_text": "\n".join(s["sanitized_transcript"] for s in segments_out),
                 "pii_detected": any(s["dlp_applied"] for s in segments_out),
-                "dlp_scope": "transcript_only",
+                "dlp_scope": "prompt_and_transcript" if state.use_dlp else "transcript_only",
                 "findings": findings,
                 "latency_ms": round(dlp_ms, 2),
             },
@@ -651,17 +651,28 @@ async def websocket_endpoint(websocket: WebSocket):
         return {"castLang": state.cast_lang, "guestLang": state.guest_lang,
                 "smartDetect": state.smart_detect, "engine": state.engine}
 
+    def stream_cfg_key():
+        return (
+            state.engine.lower(),
+            state.cast_lang,
+            state.guest_lang,
+            state.smart_detect,
+            state.voice,
+            state.use_dlp,
+            tuple(state.dlp_info_types or []),
+        )
+
     try:
         await websocket.send_json({"type": "ready", **state_payload()})
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
-            prev_stream_cfg = (state.engine.lower(), state.cast_lang, state.guest_lang, state.smart_detect, state.voice)
+            prev_stream_cfg = stream_cfg_key()
             if msg_type != "audio_chunk":
                 state.update_from_message(data)
                 print(f"[PipelineWS] Msg: {msg_type}, role={data.get('speakerRole')}, cast={state.cast_lang}, "
                       f"guest={state.guest_lang}, smart={state.smart_detect}, engine={state.engine}", flush=True)
-            new_stream_cfg = (state.engine.lower(), state.cast_lang, state.guest_lang, state.smart_detect, state.voice)
+            new_stream_cfg = stream_cfg_key()
             speaker_role = data.get("speakerRole", "cast-member")
 
             if msg_type == "config":

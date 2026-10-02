@@ -23,6 +23,8 @@ Powered by Google Cloud's enterprise stack. The default engine is a fully GA cas
 
 ## System Architecture
 
+### 1. Modular Cascade Pipeline (`Chirp 3` / `Gemini 3.5 Transcribe` ➔ `Cloud DLP` ➔ `Translation v3` ➔ `Chirp 3 HD TTS`)
+
 ```mermaid
 flowchart TD
     subgraph Client["Client Layer"]
@@ -64,6 +66,48 @@ flowchart TD
     class Web clientStyle;
     class STT,DLP,Trans,TTS pipeStyle;
     class AudioOut,TextOut outStyle;
+```
+
+### 2. Gemini 3.8 Live Native Speech-to-Speech Architecture (with DLP Prompting + Cloud DLP Guardrails)
+
+```mermaid
+flowchart TD
+    subgraph Client38["Client Layer"]
+        Web38["<b>Web Client (Browser / Mobile Web)</b><br/>• Bidirectional Mic Audio Stream (16kHz PCM)<br/>• Cast Anchor + Smart Guest Detection<br/>• Low-Latency Streaming Audio Queue"]
+    end
+
+    subgraph Pipeline38["Enterprise Translation & Safety Pipeline (Cloud Run)"]
+        direction TB
+        SysPrompt["<b>1. Dynamic System Prompt & Guardrails</b><br/>• Cast ↔ Guest Direction & Language Anchor Rules<br/>• In-Prompt Brand Glossary Injection (ES, PT, FR, JA, ZH)<br/>• <b>DLP Redaction Prompting</b> (Omit/Mask Credit Cards, PINs,<br/>  Reservation IDs, Wristband UIDs in Spoken Audio)"]
+        Gem38["<b>2. Vertex AI Gemini 3.8 Live (us-central1)</b><br/>• Bidirectional Multimodal Live Session (AUDIO Modality)<br/>• Native Speech-to-Speech Interpretation (24kHz PCM)<br/>• Concurrent Input & Output Audio Transcription"]
+        CloudDLP38["<b>3. Deterministic Cloud DLP Guardrail</b><br/>• Inspects & Redacts Input + Output Transcripts<br/>• Enforces Active InfoTypes (PCI-DSS, COPPA, Custom IDs)<br/>• Optional Hybrid Audio Gate (Fallback to Chirp 3 HD TTS<br/>  if unredacted PII is detected in transcript)"]
+    end
+
+    subgraph Experience38["Host & Guest Output"]
+        AudioOut38["<b>Gemini 3.8 Native Translated Audio</b><br/>(24kHz Streaming Speech w/ Prompted PII Omission)"]
+        TextOut38["<b>DLP-Scrubbed Dual Subtitles & Saved History</b><br/>(Live Captions, Telemetry & Past Conversations)"]
+    end
+
+    %% Flow
+    Web38 -->|"Live Mic Audio (PCM 16kHz)"| Gem38
+    SysPrompt -->|"LiveConnectConfig (system_instruction)"| Gem38
+    Gem38 -->|"Streaming Translated Audio (24kHz PCM)"| AudioOut38
+    Gem38 -->|"Input & Output Transcripts"| CloudDLP38
+    CloudDLP38 -->|"Sanitized Transcripts + DLP Telemetry"| TextOut38
+
+    AudioOut38 -.->|"Audio Stream"| Web38
+    TextOut38 -.->|"Rendered in UI"| Web38
+
+    %% Styling
+    classDef clientStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef gemStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef dlpStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+    classDef outStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+
+    class Web38 clientStyle;
+    class SysPrompt,Gem38 gemStyle;
+    class CloudDLP38 dlpStyle;
+    class AudioOut38,TextOut38 outStyle;
 ```
 
 ---
@@ -150,10 +194,10 @@ Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` wh
 | **Chirp 3** *(default)* | Speech-to-Text V2 (`chirp_3`, `us` multi-region) ➔ DLP ➔ Translation v3 ➔ Chirp 3 HD TTS | Yes | Yes | Before translation and speech | Translation v3 glossary + Speech Adaptation |
 | **Gemini 3.5 Transcribe** | `gemini-3.5-transcribe-live-preview` (`global`) ➔ DLP ➔ Translation v3 ➔ Chirp 3 HD TTS | Yes | Yes | Before translation and speech | Translation v3 glossary + custom vocabulary |
 | **Gemini 3.5 Live Translate** | `gemini-3.5-live-translate-preview` (`global`) speech-to-speech translation, one target language per turn | Yes | No | Transcripts only (audio is spoken by the model) | Not supported by the model |
-| **Gemini 3.8 Live** | `gemini-3.8-live` (`us-central1`) speech-to-speech interpreter driven by a system prompt with the cast-anchor rules | Yes | Yes | Transcripts only (audio is spoken by the model) | Via system prompt |
+| **Gemini 3.8 Live** | `gemini-3.8-live` (`us-central1`) speech-to-speech interpreter driven by a system prompt with the cast-anchor rules | Yes | Yes | Spoken audio via system prompt + transcripts via Cloud DLP | Via system prompt |
 
 > [!NOTE]
-> The Gemini speech-to-speech engines produce translated audio directly, so Cloud DLP cannot redact what is spoken; it only redacts the transcripts shown and saved. Use Chirp 3 or Gemini 3.5 Transcribe when spoken PII redaction is required.
+> Because speech-to-speech engines generate translated audio directly inside the model, **Gemini 3.8 Live** enforces PII protection using two layers: (1) dynamic **DLP redaction rules injected into `system_instruction`** (`dlp_prompt(state)`) that instruct the model to replace active InfoTypes (Credit Cards, PINs, Reservation IDs, Wristband UIDs, etc.) with *"redacted"* in spoken audio, and (2) deterministic **Cloud DLP** scrubbing on both input and output transcripts before display or storage. (`Gemini 3.5 Live Translate` does not accept `system_instruction`, so DLP applies to its transcripts only.)
 
 ---
 

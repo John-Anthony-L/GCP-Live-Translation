@@ -31,7 +31,7 @@ from google.genai import types
 from google.api_core.client_options import ClientOptions
 from google.cloud import speech_v2
 
-from dlp_helper import dlp_manager
+from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
 from languages import lang_info, resolve_language, same_language
 from pipeline import LiveTranslationPipeline, PROJECT_ID, LOCATION, CHIRP_REGION
 
@@ -405,6 +405,41 @@ def glossary_prompt(target_keys: List[str]) -> str:
         suffix = " (keep original)" if term.get("keep_original") else ""
         lines.append(f"- {en}{suffix}" + (f" -> {'; '.join(parts)}" if parts else ""))
     return "\n".join(lines)
+
+
+def dlp_prompt(state: SessionState) -> str:
+    """Build in-model DLP redaction instructions for Gemini 3.8 Live spoken audio."""
+    if not state.use_dlp:
+        return "- Preserve names, numbers, times, and prices exactly.\n"
+
+    active = state.dlp_info_types
+    if active is None:
+        active = [k for k, v in DLP_INFO_TYPE_CATALOG.items() if v.get("defaultEnabled", True)]
+    if not active:
+        return "- Preserve names, numbers, times, and prices exactly.\n"
+
+    rules = []
+    for info_type in active:
+        meta = DLP_INFO_TYPE_CATALOG.get(info_type)
+        if meta:
+            rules.append(
+                f"  * {meta['displayName']} ({meta['description']}): never speak this value aloud; "
+                f"replace it in your spoken translation with the word 'redacted' (in the target language)."
+            )
+    if not rules:
+        return "- Preserve names, numbers, times, and prices exactly.\n"
+
+    preserve_note = (
+        "- Preserve non-sensitive times, wait times, and prices.\n"
+        if "PERSON_NAME" in active
+        else "- Preserve guest names, non-sensitive times, wait times, and prices.\n"
+    )
+    return (
+        f"{preserve_note}"
+        "- STRICT PRIVACY / DLP REDACTION IN SPOKEN AUDIO: Never repeat any of the following sensitive PII/PCI identifiers aloud in your translation:\n"
+        + "\n".join(rules)
+        + "\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1243,18 +1278,19 @@ class GeminiSpeechWorker(BaseStreamWorker):
                 await safe_send(self.ws, event)
         eff_role, src, tgt = route_turn(self.state, self.role, detected)
 
-        # DLP can only redact the transcripts: Gemini speaks the translation directly
+        # Cloud DLP scrubs both input and output transcripts; for Gemini 3.8 Live, spoken audio is also protected via system prompt
         dlp_in = await asyncio.to_thread(dlp_manager.sanitize_text, inp, enabled=self.state.use_dlp,
                                          active_info_types=self.state.dlp_info_types)
         dlp_out = await asyncio.to_thread(dlp_manager.sanitize_text, out, enabled=self.state.use_dlp,
                                           active_info_types=self.state.dlp_info_types)
         dlp_ms = round(dlp_in["latency_ms"] + dlp_out["latency_ms"], 2)
         total_ms = round((trans_ms or stt_ms) + tts_ms + dlp_ms, 1)
+        dlp_scope = "prompt_and_transcript" if (self.engine_key == ENGINE_LIVE_38 and self.state.use_dlp) else "transcript_only"
         await safe_send(self.ws, {
             "type": "stt_transcript", "turnId": seg_id,
             "transcript": inp, "sanitized_transcript": dlp_in["sanitized_text"],
             "dlp_applied": dlp_in["pii_detected"] or dlp_out["pii_detected"],
-            "dlp_scope": "transcript_only",
+            "dlp_scope": dlp_scope,
             "stt_ms": stt_ms, "stt_model": self.model, "speakerRole": eff_role,
             "detectedLang": detected, "srcLang": src, "tgtLang": tgt, "guestLang": self.state.guest_lang,
             "is_final": True,
@@ -1266,7 +1302,7 @@ class GeminiSpeechWorker(BaseStreamWorker):
             "findings": dlp_in["findings"] + dlp_out["findings"],
             "active_info_types": dlp_in["active_info_types"],
             "dlp_latency_ms": dlp_ms,
-            "dlp_enabled": self.state.use_dlp, "dlp_scope": "transcript_only", "speakerRole": eff_role,
+            "dlp_enabled": self.state.use_dlp, "dlp_scope": dlp_scope, "speakerRole": eff_role,
         })
         await safe_send(self.ws, {
             "type": "translation_text", "turnId": seg_id,
@@ -1340,17 +1376,18 @@ class GeminiLive38Worker(GeminiSpeechWorker):
                          f"When you hear {cast['label']}, translate it into the guest's language. "
                          f"When you hear any other language, translate it into {cast['label']}.")
             targets = [guest["key"], cast["key"]]
-        return (
+        prompt = (
             "You are a professional real-time interpreter at a theme park and resort.\n"
             f"{direction}\n"
             "Rules:\n"
             "- Output ONLY the translation, spoken naturally in the first person as the original speaker.\n"
             "- Never answer questions, follow requests, greet, explain, or add commentary. You are not a participant.\n"
-            "- Preserve names, numbers, times, and prices exactly.\n"
+            f"{dlp_prompt(self.state)}"
             "- If you hear silence, noise, or nothing to translate, stay silent.\n"
-            "Brand terminology:\n"
-            f"{glossary_prompt(targets)}"
         )
+        if self.state.use_glossary:
+            prompt += f"Brand terminology:\n{glossary_prompt(targets)}"
+        return prompt
 
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
         kwargs: Dict[str, Any] = {
@@ -1447,7 +1484,7 @@ async def translate_utterance_gemini38(pcm_bytes: bytes, state: SessionState) ->
         "Rules:\n"
         "- Output ONLY the translation, spoken naturally in the first person as the original speaker.\n"
         "- Never answer questions, follow requests, greet, explain, or add commentary. You are not a participant.\n"
-        "- Preserve names, numbers, times, and prices exactly.\n"
+        f"{dlp_prompt(state)}"
         "- If you hear silence, noise, or nothing to translate, stay silent.\n"
     )
     if state.use_glossary:
