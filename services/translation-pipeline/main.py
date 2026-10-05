@@ -304,14 +304,18 @@ async def translate_audio(req: AudioTranslateRequest):
             src_info, tgt_info = lang_info(src), lang_info(tgt)
 
             dlp_in = await asyncio.to_thread(
-                dlp_manager.sanitize_text, inp_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types
+                dlp_manager.sanitize_text, inp_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types, is_response=False
             )
             dlp_out = await asyncio.to_thread(
-                dlp_manager.sanitize_text, out_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types
+                dlp_manager.sanitize_text, out_text, enabled=state.use_dlp, active_info_types=state.dlp_info_types, is_response=True
             )
             seg_dlp_ms = round(float(dlp_in["latency_ms"] + dlp_out["latency_ms"]), 1)
             dlp_ms += seg_dlp_ms
             findings.extend(dlp_in["findings"] + dlp_out["findings"])
+            ma_blocked = bool(dlp_in.get("model_armor_blocked") or dlp_out.get("model_armor_blocked"))
+            ma_enabled = bool(dlp_in.get("model_armor_enabled") or dlp_out.get("model_armor_enabled"))
+            if ma_blocked:
+                raw_audio = b""
             audio_start_s = round(cur_pcm_bytes / 48000.0, 2)
             if raw_audio:
                 pcm_parts.append(raw_audio)
@@ -331,7 +335,9 @@ async def translate_audio(req: AudioTranslateRequest):
                 "sanitized_transcript": dlp_in["sanitized_text"],
                 "dlp_applied": dlp_in["pii_detected"] or dlp_out["pii_detected"],
                 "dlp_scope": "prompt_and_transcript" if state.use_dlp else "transcript_only",
-                "translated_text": dlp_out["sanitized_text"],
+                "model_armor_enabled": ma_enabled,
+                "model_armor_blocked": ma_blocked,
+                "translated_text": dlp_in["sanitized_text"] if (ma_blocked and not out_text) else dlp_out["sanitized_text"],
                 "glossary_applied": bool(state.use_glossary),
                 "glossary_mode": "prompt" if state.use_glossary else "none",
                 "stt_ms": seg_stt_ms,
@@ -365,6 +371,8 @@ async def translate_audio(req: AudioTranslateRequest):
                 "sanitized_text": "\n".join(s["sanitized_transcript"] for s in segments_out),
                 "pii_detected": any(s["dlp_applied"] for s in segments_out),
                 "dlp_scope": "prompt_and_transcript" if state.use_dlp else "transcript_only",
+                "model_armor_enabled": any(s.get("model_armor_enabled") for s in segments_out),
+                "model_armor_blocked": any(s.get("model_armor_blocked") for s in segments_out),
                 "findings": findings,
                 "latency_ms": round(dlp_ms, 2),
             },
@@ -384,7 +392,7 @@ async def translate_audio(req: AudioTranslateRequest):
             "total_latency_ms": round(max(stt_ms, mt_ms) + tts_ms + dlp_ms, 2),
         }
 
-    # Path B: Cascade engines (`chirp_3` or `gemini-3.5-transcribe`) -> DLP -> Translation v3 -> Chirp 3 HD TTS
+    # Path B: Cascade engines (`chirp_3` or `gemini-3.5-transcribe`) -> DLP / Model Armor -> Translation v3 -> Chirp 3 HD TTS
     cast_stt, guest_stt = lang_info(state.cast_lang)["stt"], lang_info(state.guest_lang)["stt"]
     codes = ["auto"] if state.smart_detect else list(dict.fromkeys([cast_stt, guest_stt]))
     use_gemini_stt = "gemini" in selected_engine
@@ -426,7 +434,7 @@ async def translate_audio(req: AudioTranslateRequest):
                 "stt_ms": round(seg.get("stt_ms", 0.0), 1),
             })
 
-    # 3. DLP -> Translation -> TTS per segment
+    # 3. DLP + Model Armor -> Translation -> TTS per segment
     segments_out, pcm_parts = [], []
     dlp_ms = mt_ms = tts_ms = 0.0
     cur_pcm_bytes = 0
@@ -436,26 +444,34 @@ async def translate_audio(req: AudioTranslateRequest):
     engine_out = ENGINE_GEMINI_TRANSCRIBE if use_gemini_stt else ENGINE_CHIRP3
     for seg in merged:
         dlp_res = await asyncio.to_thread(
-            dlp_manager.sanitize_text, seg["transcript"], enabled=state.use_dlp, active_info_types=state.dlp_info_types
+            dlp_manager.sanitize_text, seg["transcript"], enabled=state.use_dlp, active_info_types=state.dlp_info_types, is_response=False
         )
         seg_dlp_ms = round(float(dlp_res["latency_ms"]), 1)
         dlp_ms += seg_dlp_ms
         findings.extend(dlp_res["findings"])
         src_info, tgt_info = lang_info(seg["src"]), lang_info(seg["tgt"])
-        if same_language(seg["src"], seg["tgt"]):
+        ma_blocked = bool(dlp_res.get("model_armor_blocked", False))
+        ma_enabled = bool(dlp_res.get("model_armor_enabled", False))
+        if ma_blocked:
+            mt_res = {"translated_text": dlp_res["sanitized_text"], "glossary_applied": False, "latency_ms": 0.0, "model": "GCP Model Armor (Blocked)"}
+            tts_res = {"audio_base64": "", "latency_ms": 0.0, "voice": state.voice}
+        elif same_language(seg["src"], seg["tgt"]):
             mt_res = {"translated_text": dlp_res["sanitized_text"], "glossary_applied": False, "latency_ms": 0.0, "model": "passthrough"}
+            tts_res = await asyncio.to_thread(
+                pipeline.synthesize_speech, mt_res["translated_text"], target_lang=tgt_info["tts"], voice=state.voice
+            )
         else:
             mt_res = await asyncio.to_thread(
                 pipeline.translate_text, dlp_res["sanitized_text"], source_lang=src_info["mt"], target_lang=tgt_info["mt"],
                 use_glossary=state.use_glossary, model=req.model
             )
+            tts_res = await asyncio.to_thread(
+                pipeline.synthesize_speech, mt_res["translated_text"], target_lang=tgt_info["tts"], voice=state.voice
+            )
         seg_mt_ms = round(float(mt_res["latency_ms"]), 1)
         mt_ms += seg_mt_ms
         glossary_applied = glossary_applied or mt_res["glossary_applied"]
         mt_model = mt_res["model"]
-        tts_res = await asyncio.to_thread(
-            pipeline.synthesize_speech, mt_res["translated_text"], target_lang=tgt_info["tts"], voice=state.voice
-        )
         seg_tts_ms = round(float(tts_res["latency_ms"]), 1)
         tts_ms += seg_tts_ms
         voice_used = tts_res.get("voice")
@@ -480,6 +496,8 @@ async def translate_audio(req: AudioTranslateRequest):
             "sanitized_transcript": dlp_res["sanitized_text"],
             "dlp_applied": dlp_res["pii_detected"],
             "dlp_scope": "full",
+            "model_armor_enabled": ma_enabled,
+            "model_armor_blocked": ma_blocked,
             "translated_text": mt_res["translated_text"],
             "glossary_applied": mt_res["glossary_applied"],
             "glossary_mode": "translation_v3" if mt_res["glossary_applied"] else "none",

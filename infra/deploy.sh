@@ -65,22 +65,30 @@ gcloud services enable \
     speech.googleapis.com \
     texttospeech.googleapis.com \
     dlp.googleapis.com \
+    modelarmor.googleapis.com \
+    firestore.googleapis.com \
     run.googleapis.com \
     artifactregistry.googleapis.com \
     storage.googleapis.com \
     cloudbuild.googleapis.com
 
-# 2b. Ensure Cloud Run runtime service account has Speech V2, Vertex AI, Translation, Storage, and DLP permissions
+# 2b. Ensure Cloud Run runtime service account and Model Armor service agent have required IAM permissions
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)' 2>/dev/null || true)"
 if [ -n "${PROJECT_NUMBER}" ]; then
     RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-    echo "🔐 Ensuring IAM roles on ${RUNTIME_SA} (Speech V2, Vertex AI, Translation v3, Storage, Cloud DLP, Cloud Run Invoker)..."
+    MODEL_ARMOR_SA="service-${PROJECT_NUMBER}@gcp-sa-modelarmor.iam.gserviceaccount.com"
+    gcloud beta services identity create --service=modelarmor.googleapis.com --project="${PROJECT_ID}" --quiet > /dev/null 2>&1 || true
+    echo "🔐 Ensuring IAM roles on ${RUNTIME_SA} (Speech V2, Vertex AI, Translation v3, Storage, Cloud DLP, Model Armor, Firestore, Cloud Run Invoker)..."
     for ROLE in \
         roles/speech.client \
         roles/aiplatform.user \
         roles/cloudtranslate.admin \
         roles/storage.objectAdmin \
         roles/dlp.user \
+        roles/dlp.reader \
+        roles/modelarmor.user \
+        roles/modelarmor.admin \
+        roles/datastore.user \
         roles/run.invoker; do
         gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
             --member="serviceAccount:${RUNTIME_SA}" \
@@ -88,6 +96,60 @@ if [ -n "${PROJECT_NUMBER}" ]; then
             --condition=None \
             --quiet > /dev/null 2>&1 || true
     done
+    for ROLE in roles/dlp.user roles/dlp.reader; do
+        gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+            --member="serviceAccount:${MODEL_ARMOR_SA}" \
+            --role="${ROLE}" \
+            --condition=None \
+            --quiet > /dev/null 2>&1 || true
+    done
+fi
+
+# 2c. Ensure SDP Inspect/Deidentify templates and GCP Model Armor templates exist in ${REGION}
+echo "🛡️ Ensuring GCP Model Armor & Cloud SDP templates in ${REGION}..."
+ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null || true)"
+if [ -n "${ACCESS_TOKEN}" ]; then
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"templateId":"live-translation-inspect","inspectTemplate":{"displayName":"Live Translation SDP Inspect Template (Default)","inspectConfig":{"infoTypes":[{"name":"CREDIT_CARD_NUMBER"},{"name":"PHONE_NUMBER"},{"name":"EMAIL_ADDRESS"},{"name":"US_PASSPORT"}],"minLikelihood":"POSSIBLE","includeQuote":true}}}' \
+        "https://dlp.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/inspectTemplates" > /dev/null 2>&1 || true
+
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"templateId":"live-translation-inspect-coppa","inspectTemplate":{"displayName":"Live Translation SDP Inspect Template (COPPA + Names)","inspectConfig":{"infoTypes":[{"name":"CREDIT_CARD_NUMBER"},{"name":"PHONE_NUMBER"},{"name":"EMAIL_ADDRESS"},{"name":"PERSON_NAME"},{"name":"US_PASSPORT"}],"minLikelihood":"POSSIBLE","includeQuote":true}}}' \
+        "https://dlp.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/inspectTemplates" > /dev/null 2>&1 || true
+
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"templateId":"live-translation-deid","deidentifyTemplate":{"displayName":"Live Translation SDP Deidentify Template (Default)","deidentifyConfig":{"infoTypeTransformations":{"transformations":[{"infoTypes":[{"name":"CREDIT_CARD_NUMBER"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[CREDIT_CARD_REDACTED]"}}}},{"infoTypes":[{"name":"PHONE_NUMBER"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[PHONE_REDACTED]"}}}},{"infoTypes":[{"name":"EMAIL_ADDRESS"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[EMAIL_REDACTED]"}}}},{"infoTypes":[{"name":"US_PASSPORT"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[PASSPORT_REDACTED]"}}}}]}}}}' \
+        "https://dlp.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/deidentifyTemplates" > /dev/null 2>&1 || true
+
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"templateId":"live-translation-deid-coppa","deidentifyTemplate":{"displayName":"Live Translation SDP Deidentify Template (COPPA + Names)","deidentifyConfig":{"infoTypeTransformations":{"transformations":[{"infoTypes":[{"name":"CREDIT_CARD_NUMBER"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[CREDIT_CARD_REDACTED]"}}}},{"infoTypes":[{"name":"PHONE_NUMBER"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[PHONE_REDACTED]"}}}},{"infoTypes":[{"name":"EMAIL_ADDRESS"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[EMAIL_REDACTED]"}}}},{"infoTypes":[{"name":"PERSON_NAME"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[GUEST_NAME_REDACTED]"}}}},{"infoTypes":[{"name":"US_PASSPORT"}],"primitiveTransformation":{"replaceConfig":{"newValue":{"stringValue":"[PASSPORT_REDACTED]"}}}}]}}}}' \
+        "https://dlp.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/deidentifyTemplates" > /dev/null 2>&1 || true
+
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"filter_config":{"rai_settings":{"rai_filters":[{"filter_type":"HATE_SPEECH","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"HARASSMENT","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"DANGEROUS","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"SEXUALLY_EXPLICIT","confidence_level":"MEDIUM_AND_ABOVE"}]},"pi_and_jailbreak_filter_settings":{"filter_enforcement":"ENABLED","confidence_level":"LOW_AND_ABOVE"},"malicious_uri_filter_settings":{"filter_enforcement":"ENABLED"},"sdp_settings":{"advanced_config":{"inspect_template":"projects/'"${PROJECT_ID}"'/locations/'"${REGION}"'/inspectTemplates/live-translation-inspect","deidentify_template":"projects/'"${PROJECT_ID}"'/locations/'"${REGION}"'/deidentifyTemplates/live-translation-deid"}}},"template_metadata":{"enforcement_type":"INSPECT_AND_BLOCK","multi_language_detection":{"enable_multi_language_detection":true}}}' \
+        "https://modelarmor.${REGION}.rep.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/templates?template_id=live-translation-armor" > /dev/null 2>&1 || true
+
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "x-goog-user-project: ${PROJECT_ID}" \
+        -d '{"filter_config":{"rai_settings":{"rai_filters":[{"filter_type":"HATE_SPEECH","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"HARASSMENT","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"DANGEROUS","confidence_level":"MEDIUM_AND_ABOVE"},{"filter_type":"SEXUALLY_EXPLICIT","confidence_level":"MEDIUM_AND_ABOVE"}]},"pi_and_jailbreak_filter_settings":{"filter_enforcement":"ENABLED","confidence_level":"LOW_AND_ABOVE"},"malicious_uri_filter_settings":{"filter_enforcement":"ENABLED"},"sdp_settings":{"advanced_config":{"inspect_template":"projects/'"${PROJECT_ID}"'/locations/'"${REGION}"'/inspectTemplates/live-translation-inspect-coppa","deidentify_template":"projects/'"${PROJECT_ID}"'/locations/'"${REGION}"'/deidentifyTemplates/live-translation-deid-coppa"}}},"template_metadata":{"enforcement_type":"INSPECT_AND_BLOCK","multi_language_detection":{"enable_multi_language_detection":true}}}' \
+        "https://modelarmor.${REGION}.rep.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/templates?template_id=live-translation-armor-coppa" > /dev/null 2>&1 || true
 fi
 
 # 3. Create GCS Glossary Bucket & Upload Brand Glossary
@@ -100,7 +162,7 @@ fi
 gcloud storage cp "glossaries/${CSV_FILE}" "gs://${BUCKET_NAME}/${CSV_FILE}"
 echo "✅ Glossary uploaded to gs://${BUCKET_NAME}/${CSV_FILE}"
 
-# 4. Deploy Service 1: Translation Pipeline (Python FastAPI: Chirp 3 V2 + Gemini 3.5/3.8 Live + Cloud DLP + MT v3 + Chirp 3 HD TTS)
+# 4. Deploy Service 1: Translation Pipeline (Python FastAPI: Chirp 3 V2 + Gemini 3.5/3.8 Live + GCP Model Armor & Cloud DLP + MT v3 + Chirp 3 HD TTS)
 echo ""
 echo "🚀 Step 3: Deploying Translation Pipeline to Cloud Run..."
 gcloud run deploy live-translation-pipeline \
@@ -110,7 +172,7 @@ gcloud run deploy live-translation-pipeline \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=${CHIRP_REGION:-us},GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME},GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview},GEMINI_TRANSCRIBE_BATCH_MODEL=${GEMINI_TRANSCRIBE_BATCH_MODEL:-gemini-3.5-transcribe-preview},GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global},GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview},GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global},GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-${REGION}}" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=${CHIRP_REGION:-us},GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME},GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview},GEMINI_TRANSCRIBE_BATCH_MODEL=${GEMINI_TRANSCRIBE_BATCH_MODEL:-gemini-3.5-transcribe-preview},GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global},GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview},GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global},GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-${REGION}},USE_MODEL_ARMOR=${USE_MODEL_ARMOR:-true},MODEL_ARMOR_LOCATION=${MODEL_ARMOR_LOCATION:-${REGION}},MODEL_ARMOR_TEMPLATE_ID=${MODEL_ARMOR_TEMPLATE_ID:-live-translation-armor},MODEL_ARMOR_COPPA_TEMPLATE_ID=${MODEL_ARMOR_COPPA_TEMPLATE_ID:-live-translation-armor-coppa}" \
     --timeout 3600 \
     --cpu 2 \
     --memory 2Gi
@@ -131,7 +193,7 @@ echo "✅ Brand Glossary registered."
 # 5. Deploy Service 2: Web & Mobile Testbed Client
 echo ""
 echo "🚀 Step 4: Deploying Web & Mobile Testbed to Cloud Run..."
-WS_PIPELINE_URL="${PIPELINE_URL/https:\/\//wss:\/\/}/ws/stream-translate"
+WS_PIPELINE_URL="${PIPELINE_URL/https:\/\//wss://}/ws/stream-translate"
 gcloud run deploy live-web-client \
     --source services/web-client \
     --project "${PROJECT_ID}" \

@@ -68,7 +68,7 @@ flowchart TD
     class AudioOut,TextOut outStyle;
 ```
 
-### 2. Gemini 3.8 Live Native Speech-to-Speech Architecture (with DLP Prompting + Cloud DLP Guardrails)
+### 2. Gemini 3.8 Live Native Speech-to-Speech Architecture (with DLP Prompting + GCP Model Armor & Cloud SDP)
 
 ```mermaid
 flowchart TD
@@ -78,14 +78,14 @@ flowchart TD
 
     subgraph Pipeline38["Enterprise Translation & Safety Pipeline (Cloud Run)"]
         direction TB
-        SysPrompt["<b>1. Dynamic System Prompt & Guardrails</b><br/>• Cast ↔ Guest Direction & Language Anchor Rules<br/>• In-Prompt Brand Glossary Injection (ES, PT, FR, JA, ZH)<br/>• <b>DLP Redaction Prompting</b> (Omit/Mask Credit Cards, PINs,<br/>  Reservation IDs, Wristband UIDs in Spoken Audio)"]
+        SysPrompt["<b>1. Dynamic System Prompt & Guardrails</b><br/>• Cast ↔ Guest Direction & Language Anchor Rules<br/>• In-Prompt Brand Glossary Injection (ES, PT, FR, JA, ZH)<br/>• <b>DLP + Anti-Jailbreak Prompting</b> (Omit Credit Cards, PINs,<br/>  Reservation IDs, Wristband UIDs in Spoken Audio)"]
         Gem38["<b>2. Vertex AI Gemini 3.8 Live (us-central1)</b><br/>• Bidirectional Multimodal Live Session (AUDIO Modality)<br/>• Native Speech-to-Speech Interpretation (24kHz PCM)<br/>• Concurrent Input & Output Audio Transcription"]
-        CloudDLP38["<b>3. Deterministic Cloud DLP Guardrail</b><br/>• Inspects & Redacts Input + Output Transcripts<br/>• Enforces Active InfoTypes (PCI-DSS, COPPA, Custom IDs)<br/>• Optional Hybrid Audio Gate (Fallback to Chirp 3 HD TTS<br/>  if unredacted PII is detected in transcript)"]
+        CloudDLP38["<b>3. GCP Model Armor + Cloud SDP Guardrail</b><br/>• Calls <code>:sanitizeUserPrompt</code> & <code>:sanitizeModelResponse</code><br/>• Screens Prompt Injection/Jailbreaks, Responsible AI & Malicious URLs<br/>• De-identifies PII via Advanced SDP Templates + Custom Regexes<br/>• Halts/Drops Audio Turn on Model Armor Policy Violations"]
     end
 
     subgraph Experience38["Host & Guest Output"]
-        AudioOut38["<b>Gemini 3.8 Native Translated Audio</b><br/>(24kHz Streaming Speech w/ Prompted PII Omission)"]
-        TextOut38["<b>DLP-Scrubbed Dual Subtitles & Saved History</b><br/>(Live Captions, Telemetry & Past Conversations)"]
+        AudioOut38["<b>Gemini 3.8 Native Translated Audio</b><br/>(24kHz Streaming Speech w/ Circuit-Breaker Protection)"]
+        TextOut38["<b>Model Armor & DLP-Scrubbed Dual Subtitles</b><br/>(Live Captions, Telemetry & Past Conversations)"]
     end
 
     %% Flow
@@ -93,7 +93,8 @@ flowchart TD
     SysPrompt -->|"LiveConnectConfig (system_instruction)"| Gem38
     Gem38 -->|"Streaming Translated Audio (24kHz PCM)"| AudioOut38
     Gem38 -->|"Input & Output Transcripts"| CloudDLP38
-    CloudDLP38 -->|"Sanitized Transcripts + DLP Telemetry"| TextOut38
+    CloudDLP38 -->|"Sanitized Transcripts + Model Armor Verdict"| TextOut38
+    CloudDLP38 -.->|"Circuit-Breaker (Halt Audio if Blocked)"| AudioOut38
 
     AudioOut38 -.->|"Audio Stream"| Web38
     TextOut38 -.->|"Rendered in UI"| Web38
@@ -390,6 +391,10 @@ In the web interface at `http://localhost:3000`:
 | `GEMINI_LIVE_TRANSLATE_LOCATION` | `global` | Endpoint location for Gemini 3.5 Live Translate (`global`) |
 | `GEMINI_LIVE_MODEL` | `gemini-3.8-live` | Model for the Gemini 3.8 Live engine |
 | `GEMINI_LIVE_LOCATION` | `LOCATION` | Endpoint location for Gemini 3.8 Live (`us-central1`) |
+| `USE_MODEL_ARMOR` | `true` | Enables GCP Model Armor (`:sanitizeUserPrompt` & `:sanitizeModelResponse`) screening |
+| `MODEL_ARMOR_LOCATION` | `LOCATION` | Regional endpoint for GCP Model Armor (`us-central1`) |
+| `MODEL_ARMOR_TEMPLATE_ID` | `live-translation-armor` | Default Model Armor template (PI/Jailbreak, RAI, Malicious URI + SDP) |
+| `MODEL_ARMOR_COPPA_TEMPLATE_ID` | `live-translation-armor-coppa` | Kiosk/COPPA Model Armor template (adds `PERSON_NAME` de-identification) |
 | `TRANSLATE_AUDIO_TIMEOUT_MS` | `300000` | Web client: timeout for recorded-upload translation requests |
 
 ---

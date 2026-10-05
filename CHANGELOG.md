@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-10-05
+
+### Added
+- **GCP Model Armor Integration (`:sanitizeUserPrompt` & `:sanitizeModelResponse`)**:
+  - Integrated regional Google Cloud Model Armor (`modelarmor.{LOCATION}.rep.googleapis.com`) into `LiveTranslationDLPManager` (`dlp_helper.py`), screening all live and uploaded transcripts for **Prompt Injection & Jailbreak**, **Responsible AI (Hate Speech, Harassment, Dangerous, Sexually Explicit, CSAM)**, **Malicious URLs**, and **Advanced Sensitive Data Protection (SDP)** de-identification.
+  - Provisioned `live-translation-armor` (Concierge default) and `live-translation-armor-coppa` (Public Kiosk with `PERSON_NAME`) templates backed by Cloud DLP Inspect (`live-translation-inspect`, `live-translation-inspect-coppa`) and De-identify (`live-translation-deid`) templates.
+  - Added an audio circuit-breaker (`model_armor_block`) that blocks translation/TTS on Cascade engines (`chirp_3`, `gemini-3.5-transcribe`) and halts/drops buffered audio on `gemini-3.8-live` whenever a prompt injection or Responsible AI policy violation is detected.
+  - Added a Prompt Injection / Jailbreak test chip to the Interactive Model Armor & DLP Sandbox in the web client.
+  - Updated `infra/deploy.sh` to automatically enable `modelarmor.googleapis.com`, grant `roles/modelarmor.user` and `roles/modelarmor.admin`, bind `roles/dlp.user` and `roles/dlp.reader` to the Model Armor service agent, and provision the SDP + Model Armor templates idempotently.
+
+---
+
 ## [1.3.0] - 2026-10-02
 
 ### Added

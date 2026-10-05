@@ -52,13 +52,13 @@ const LANGUAGE_CATALOG = {
 };
 const ENGINE_INFO = {
   'chirp_3': { label: 'Chirp 3 (Speech v2)', speechToSpeech: false, pttOnly: false,
-    note: 'Cloud DLP redacts text before translation and speech.' },
+    note: 'GCP Model Armor & Cloud DLP screen and redact text before translation and speech.' },
   'gemini-3.5-transcribe': { label: 'Gemini 3.5 Transcribe', speechToSpeech: false, pttOnly: false,
-    note: 'Gemini 3.5 Live transcribes; Cloud DLP redacts before Translation v3 and Chirp 3 HD TTS.' },
+    note: 'Gemini 3.5 Live transcribes; GCP Model Armor & Cloud DLP screen/redact before Translation v3 and Chirp 3 HD TTS.' },
   'gemini-3.5-live-translate': { label: 'Gemini 3.5 Live Translate', speechToSpeech: true, pttOnly: true,
-    note: 'Speech-to-speech, push-to-talk only. DLP applies to transcripts only; brand glossary is not supported.' },
+    note: 'Speech-to-speech, push-to-talk only. Model Armor & DLP apply to transcripts only; brand glossary is not supported.' },
   'gemini-3.8-live': { label: 'Gemini 3.8 Live', speechToSpeech: true, pttOnly: false,
-    note: 'Speech-to-speech interpreter. DLP redacts spoken audio via system prompt + scrubs transcripts via Cloud DLP; brand glossary is applied via system prompt.' }
+    note: 'Speech-to-speech interpreter. DLP + Model Armor rules protect spoken audio via system prompt + screen/redact transcripts via GCP Model Armor & Cloud DLP; brand glossary via system prompt.' }
 };
 
 function langMeta(code) {
@@ -557,13 +557,16 @@ async function runDlpSandbox() {
 function renderSandboxResult(data) {
   let outputHtml = data.sanitized_text || '';
   
-  // Highlight redaction placeholders
-  const placeholderRegex = /\[[A-Z0-9_]+_REDACTED\]|\[[A-Z0-9_]+\]/g;
+  // Highlight redaction placeholders and Model Armor block banners
+  const placeholderRegex = /\[BLOCKED BY GCP MODEL ARMOR:[^\]]+\]|\[[A-Z0-9_]+_REDACTED\]|\[[A-Z0-9_]+\]/g;
   outputHtml = outputHtml.replace(placeholderRegex, (match) => `<span class="redacted-token">${match}</span>`);
 
   sandboxOutput.innerHTML = outputHtml;
-  if (sandboxLatency) sandboxLatency.innerText = `Inspection Latency: ${data.latency_ms || 0} ms`;
-  if (sandboxPiiCount) sandboxPiiCount.innerText = `${data.findings ? data.findings.length : 0} Sensitive Entities Detected`;
+  const maTag = data.model_armor_enabled
+    ? (data.model_armor_blocked ? ' • 🚫 Model Armor BLOCKED' : ' • 🛡️ Model Armor Verified')
+    : '';
+  if (sandboxLatency) sandboxLatency.innerText = `Inspection Latency: ${data.latency_ms || 0} ms${maTag}`;
+  if (sandboxPiiCount) sandboxPiiCount.innerText = `${data.findings ? data.findings.length : 0} Findings (Model Armor + SDP)`;
 
   if (sandboxFindingsWrap && sandboxFindingsList) {
     if (data.findings && data.findings.length > 0) {
@@ -1024,39 +1027,59 @@ function handleServerEvent(data) {
       break;
     }
 
+    case 'model_armor_block': {
+      console.warn('[WS] GCP Model Armor Block:', data);
+      audioPlaybackQueue = [];
+      addTerminalLog(`[MODEL ARMOR BLOCK] Turn ${turnId || ''} blocked by GCP Model Armor policy (Prompt Injection / Responsible AI)`, 'dlp');
+      break;
+    }
+
     case 'dlp_status': {
       console.log('[WS] DLP Status:', data);
       setMetric(dlpLatencyVal, data.dlp_latency_ms);
+      if (data.model_armor_blocked) {
+        audioPlaybackQueue = [];
+      }
       if (turnId && bubblesByTurn.has(turnId)) {
         const b = bubblesByTurn.get(turnId);
         if (b && b._turnData) {
           b._turnData.dlpMs = data.dlp_latency_ms;
           b._turnData.dlpApplied = !!data.pii_detected;
           b._turnData.dlpScope = data.dlp_scope;
+          b._turnData.modelArmorBlocked = !!data.model_armor_blocked;
           renderBubbleLatencyRow(b);
         }
       }
       const scope = data.dlp_scope === 'transcript_only'
         ? ' (transcript only)'
         : (data.dlp_scope === 'prompt_and_transcript' ? ' (prompt + transcript)' : '');
+      const maPrefix = data.model_armor_enabled ? 'Model Armor + ' : '';
       const findings = data.findings || [];
       if (dlpMetricSub) {
-        dlpMetricSub.innerText = data.pii_detected
-          ? `⚠️ ${findings.length} PII Masked${scope}`
-          : (data.dlp_enabled ? `🛡️ Clean${scope}` : '⚠️ Bypassed');
+        if (data.model_armor_blocked) {
+          dlpMetricSub.innerText = `🚫 Blocked by Model Armor`;
+        } else {
+          dlpMetricSub.innerText = data.pii_detected
+            ? `⚠️ ${findings.length} PII Masked${scope}`
+            : (data.dlp_enabled ? `🛡️ ${maPrefix}Clean${scope}` : '⚠️ Bypassed');
+        }
       }
       if (terminalDlpText) {
-        if (data.pii_detected) {
+        if (data.model_armor_blocked) {
+          terminalDlpText.innerHTML = `🚫 <span style="color:#ff5252">Blocked by GCP Model Armor:</span> "${escapeHtml(data.sanitized_text)}"`;
+          terminalDlpMeta.innerText = `Policy Violation • ${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
+          addTerminalLog(`[MODEL ARMOR BLOCKED] ${findings.map(f => f.infoType ? (f.displayName || f.infoType) : f).join(', ')} (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
+        } else if (data.pii_detected) {
           terminalDlpText.innerHTML = `⚠️ <span style="color:#ff8a80">PII Scrubbed:</span> "${escapeHtml(data.sanitized_text)}"`;
           terminalDlpMeta.innerText = `${findings.length} Findings • ${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
           const where = data.dlp_scope === 'transcript_only'
             ? 'in transcripts (spoken audio is not redacted)'
             : (data.dlp_scope === 'prompt_and_transcript'
-              ? 'via system prompt (spoken audio) + Cloud DLP (transcripts)'
+              ? 'via system prompt (spoken audio) + GCP Model Armor / DLP (transcripts)'
               : 'before translation and speech');
           addTerminalLog(`[DLP MASKED] ${findings.map(f => f.infoType ? (f.displayName || f.infoType) : f).join(', ')} redacted ${where} (${Math.round(data.dlp_latency_ms || 0)}ms)`, 'dlp');
         } else {
-          terminalDlpText.innerText = data.dlp_enabled ? `🛡️ Clean (No PII Detected)` : `⚠️ DLP Bypassed (Raw)`;
+          terminalDlpText.innerText = data.dlp_enabled ? `🛡️ ${maPrefix}Clean (No PII / Threats)` : `⚠️ DLP Bypassed (Raw)`;
           terminalDlpMeta.innerText = `${Math.round(data.dlp_latency_ms || 0)}ms${scope}`;
         }
       }
