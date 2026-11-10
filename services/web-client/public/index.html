@@ -92,7 +92,7 @@
             <select id="engineSelect" class="custom-select">
               <option value="chirp_3" selected>Chirp 3 → Translation → TTS</option>
               <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe → Translation → TTS</option>
-              <option value="gemini-3.5-live-translate">Gemini 3.5 Live Translate (push-to-talk)</option>
+              <option value="gemini-3.5-live-translate">Gemini 3.5 Live Translate (2-Way S2S)</option>
               <option value="gemini-3.8-live">Gemini 3.8 Live (interpreter)</option>
             </select>
             <span class="engine-note" id="engineNote">Cloud DLP redacts text before translation and speech.</span>
@@ -672,7 +672,7 @@
           <div class="panel-header">
             <div>
               <h2>📁 Upload Recorded Conversation</h2>
-              <p>Upload a recorded conversation (WAV, MP3, M4A, OGG, WebM). Choose Chirp 3, Gemini 3.5 Transcribe, or Gemini 3.8 Live: each utterance is transcribed and language-detected with the cast language as anchor (Gemini 3.5 Live Translate is Push-to-Talk only).</p>
+              <p>Upload a recorded conversation (WAV, MP3, M4A, OGG, WebM). Choose Chirp 3, Gemini 3.5 Transcribe, Gemini 3.5 Live Translate, or Gemini 3.8 Live: each utterance is transcribed and language-detected with the cast language as anchor.</p>
             </div>
             <div class="upload-badge">
               <span id="uploadEngineBadge">Cloud Chirp 3 + DLP + MT v3</span>
@@ -682,10 +682,11 @@
           <!-- Configuration Controls for Upload -->
           <div class="controls-card" style="margin-top: 14px;">
             <div class="control-group">
-              <label for="uploadEngineSelect">Translation Engine <span class="label-hint">(3.5 Live Translate is Push-to-Talk only)</span></label>
+              <label for="uploadEngineSelect">Translation Engine</label>
               <select id="uploadEngineSelect" class="custom-select">
                 <option value="chirp_3" selected>Chirp 3 (STT v2) → Translation → TTS</option>
                 <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe → Translation → TTS</option>
+                <option value="gemini-3.5-live-translate">Gemini 3.5 Live Translate (Speech-to-Speech)</option>
                 <option value="gemini-3.8-live">Gemini 3.8 Live (Speech-to-Speech Interpreter)</option>
               </select>
             </div>

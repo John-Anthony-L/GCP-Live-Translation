@@ -55,8 +55,8 @@ const ENGINE_INFO = {
     note: 'GCP Model Armor & Cloud DLP screen and redact text before translation and speech.' },
   'gemini-3.5-transcribe': { label: 'Gemini 3.5 Transcribe', speechToSpeech: false, pttOnly: false,
     note: 'Gemini 3.5 Live transcribes; GCP Model Armor & Cloud DLP screen/redact before Translation v3 and Chirp 3 HD TTS.' },
-  'gemini-3.5-live-translate': { label: 'Gemini 3.5 Live Translate', speechToSpeech: true, pttOnly: true,
-    note: 'Speech-to-speech, push-to-talk only. Model Armor & DLP apply to transcripts only; brand glossary is not supported.' },
+  'gemini-3.5-live-translate': { label: 'Gemini 3.5 Live Translate', speechToSpeech: true, pttOnly: false,
+    note: 'Speech-to-speech translator (Push-to-Talk & 2-Way Bidirectional via paired echo_target_language=False sessions). Brand glossary, DLP & Model Armor enforced via system prompt + GCP Model Armor & Cloud DLP on transcripts.' },
   'gemini-3.8-live': { label: 'Gemini 3.8 Live', speechToSpeech: true, pttOnly: false,
     note: 'Speech-to-speech interpreter. DLP + Model Armor rules protect spoken audio via system prompt + screen/redact transcripts via GCP Model Armor & Cloud DLP; brand glossary via system prompt.' }
 };
@@ -2359,6 +2359,8 @@ function setupRecordedUpload() {
     if (uploadEngineBadge) {
       if (eng === 'gemini-3.8-live') {
         uploadEngineBadge.innerText = 'Gemini 3.8 Live (Speech-to-Speech) + DLP';
+      } else if (eng === 'gemini-3.5-live-translate') {
+        uploadEngineBadge.innerText = 'Gemini 3.5 Live Translate (S2S) + DLP';
       } else if (eng === 'gemini-3.5-transcribe') {
         uploadEngineBadge.innerText = 'Gemini 3.5 Transcribe + DLP + MT v3 + TTS';
       } else {
@@ -2366,9 +2368,10 @@ function setupRecordedUpload() {
       }
     }
     if (uploadEngineNote) {
-      if (eng === 'gemini-3.8-live') {
+      if (eng === 'gemini-3.8-live' || eng === 'gemini-3.5-live-translate') {
+        const name = eng === 'gemini-3.5-live-translate' ? 'Gemini 3.5 Live Translate' : 'Gemini 3.8 Live';
         uploadEngineNote.style.display = 'block';
-        uploadEngineNote.innerText = 'Gemini 3.8 Live translates speech-to-speech directly; Cloud DLP redacts transcripts only and Brand Glossary is enforced via system prompt.';
+        uploadEngineNote.innerText = `${name} translates speech-to-speech directly; Brand Glossary & DLP guardrails are enforced via system prompt and GCP Model Armor & Cloud DLP screen/redact transcripts.`;
       } else {
         uploadEngineNote.style.display = 'none';
         uploadEngineNote.innerText = '';
@@ -2407,7 +2410,9 @@ function setupRecordedUpload() {
     const uploadEngine = uploadEngineSelect ? uploadEngineSelect.value : 'chirp_3';
     const engineLabel = uploadEngine === 'gemini-3.8-live'
       ? 'Gemini 3.8 Live'
-      : (uploadEngine === 'gemini-3.5-transcribe' ? 'Gemini 3.5 Transcribe' : 'Chirp 3 (Speech v2)');
+      : (uploadEngine === 'gemini-3.5-live-translate'
+        ? 'Gemini 3.5 Live Translate'
+        : (uploadEngine === 'gemini-3.5-transcribe' ? 'Gemini 3.5 Transcribe' : 'Chirp 3 (Speech v2)'));
 
     uploadStatusBox.style.display = 'flex';
     uploadStatusText.innerText = 'Decoding audio file and converting to 16kHz PCM...';

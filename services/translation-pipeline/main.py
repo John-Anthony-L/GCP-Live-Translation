@@ -15,11 +15,14 @@ from live_workers import (
     BaseStreamWorker,
     Chirp3StreamWorker,
     GeminiTranscribeWorker,
+    GeminiLiveTranslateWorker,
+    GeminiLiveTranslateBidiWorker,
     StreamingSTTWorker,
     GeminiLiveTranscribeWorker,
     create_stream_worker,
     process_text_turn,
     process_batch_audio_turn,
+    translate_utterance_gemini35_live,
     translate_utterance_gemini38,
     apply_guest_detection,
     route_turn,
@@ -55,7 +58,7 @@ LOCATION = os.getenv("LOCATION", "us-central1")
 ENGINES = [
     {"id": ENGINE_CHIRP3, "label": "Chirp 3 -> Translation -> TTS", "speech_to_speech": False, "ptt_only": False},
     {"id": ENGINE_GEMINI_TRANSCRIBE, "label": f"{GEMINI_TRANSCRIBE_MODEL} -> Translation -> TTS", "speech_to_speech": False, "ptt_only": False},
-    {"id": ENGINE_LIVE_TRANSLATE, "label": GEMINI_LIVE_TRANSLATE_MODEL, "speech_to_speech": True, "ptt_only": True},
+    {"id": ENGINE_LIVE_TRANSLATE, "label": GEMINI_LIVE_TRANSLATE_MODEL, "speech_to_speech": True, "ptt_only": False},
     {"id": ENGINE_LIVE_38, "label": GEMINI_LIVE_MODEL, "speech_to_speech": True, "ptt_only": False},
 ]
 
@@ -274,28 +277,35 @@ async def translate_audio(req: AudioTranslateRequest):
         voice=req.voice or "Aoede",
     )
 
-    # Path A: Gemini 3.8 Live Speech-to-Speech Interpreter
-    if selected_engine == ENGINE_LIVE_38:
+    # Path A: Speech-to-Speech Live Engines (`gemini-3.8-live` or `gemini-3.5-live-translate`)
+    if selected_engine in (ENGINE_LIVE_38, ENGINE_LIVE_TRANSLATE):
+        is_35_live = selected_engine == ENGINE_LIVE_TRANSLATE
+        s2s_model = GEMINI_LIVE_TRANSLATE_MODEL if is_35_live else GEMINI_LIVE_MODEL
+        s2s_engine = ENGINE_LIVE_TRANSLATE if is_35_live else ENGINE_LIVE_38
         segments_out, pcm_parts = [], []
         stt_ms = mt_ms = tts_ms = dlp_ms = 0.0
         cur_pcm_bytes = 0
         pause_bytes = b"\x00" * int(24000 * 2 * 0.35)
         findings: List[Dict[str, Any]] = []
-        voice_used = f"{GEMINI_LIVE_MODEL} ({state.voice})"
+        voice_used = f"{s2s_model} ({state.voice})"
         for utterance in _split_pcm_utterances(pcm_bytes, max_window_s=35):
-            res38 = await translate_utterance_gemini38(utterance, state)
-            seg_stt_ms = round(float(res38.get("stt_ms", res38.get("latency_ms", 0.0))), 1)
-            seg_mt_ms = round(float(res38.get("translation_ms", res38.get("latency_ms", 0.0))), 1)
-            seg_tts_ms = round(float(res38.get("tts_ms", 0.0)), 1)
+            res_s2s = (
+                await translate_utterance_gemini35_live(utterance, state)
+                if is_35_live
+                else await translate_utterance_gemini38(utterance, state)
+            )
+            seg_stt_ms = round(float(res_s2s.get("stt_ms", res_s2s.get("latency_ms", 0.0))), 1)
+            seg_mt_ms = round(float(res_s2s.get("translation_ms", res_s2s.get("latency_ms", 0.0))), 1)
+            seg_tts_ms = round(float(res_s2s.get("tts_ms", 0.0)), 1)
             stt_ms += seg_stt_ms
             mt_ms += seg_mt_ms
             tts_ms += seg_tts_ms
-            inp_text = res38.get("transcript", "").strip()
-            out_text = res38.get("translated_text", "").strip()
-            raw_audio = res38.get("audio_pcm") or b""
+            inp_text = res_s2s.get("transcript", "").strip()
+            out_text = res_s2s.get("translated_text", "").strip()
+            raw_audio = res_s2s.get("audio_pcm") or b""
             if not inp_text and not out_text and not raw_audio:
                 continue
-            detected = res38.get("detected_lang")
+            detected = res_s2s.get("detected_lang")
             if not detected and inp_text:
                 det = await asyncio.to_thread(pipeline.detect_language, inp_text)
                 detected = det.get("language_code")
@@ -345,17 +355,17 @@ async def translate_audio(req: AudioTranslateRequest):
                 "translation_ms": seg_mt_ms,
                 "tts_ms": seg_tts_ms,
                 "total_latency_ms": seg_total_ms,
-                "stt_model": GEMINI_LIVE_MODEL,
-                "model": GEMINI_LIVE_MODEL,
+                "stt_model": s2s_model,
+                "model": s2s_model,
                 "voice": voice_used,
-                "engine": ENGINE_LIVE_38,
+                "engine": s2s_engine,
                 "audio_start_s": audio_start_s,
                 "audio_end_s": audio_end_s,
             })
 
         guest_info = lang_info(state.guest_lang)
         return {
-            "engine": ENGINE_LIVE_38,
+            "engine": s2s_engine,
             "segments": segments_out,
             "cast_lang": state.cast_lang,
             "guest_lang": state.guest_lang,
@@ -363,7 +373,7 @@ async def translate_audio(req: AudioTranslateRequest):
             "detected_guest_label": f"{guest_info['flag']} {guest_info['label']}" if state.guest_detected else None,
             "stt": {
                 "transcript": "\n".join(s["transcript"] for s in segments_out),
-                "stt_model": GEMINI_LIVE_MODEL,
+                "stt_model": s2s_model,
                 "detected_lang": state.guest_lang,
                 "latency_ms": round(stt_ms, 2),
             },
@@ -380,7 +390,7 @@ async def translate_audio(req: AudioTranslateRequest):
                 "translated_text": "\n".join(s["translated_text"] for s in segments_out),
                 "glossary_applied": bool(state.use_glossary),
                 "glossary_mode": "prompt" if state.use_glossary else "none",
-                "model": GEMINI_LIVE_MODEL,
+                "model": s2s_model,
                 "latency_ms": round(mt_ms, 2),
             },
             "tts": {
