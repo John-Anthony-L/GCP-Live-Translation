@@ -397,30 +397,39 @@ def friendly_gemini_error(model: str, location: str, err: Exception) -> str:
 
 
 _glossary_cache: Optional[Dict[str, Any]] = None
+_glossary_mtime: float = 0.0
 
 
 def load_brand_glossary() -> Dict[str, Any]:
-    global _glossary_cache
-    if _glossary_cache is not None:
-        return _glossary_cache
+    global _glossary_cache, _glossary_mtime
     here = os.path.dirname(os.path.abspath(__file__))
     for path in ("/app/glossaries/enterprise_parks_glossary.json",
                  os.path.join(here, "../../glossaries/enterprise_parks_glossary.json"),
                  os.path.join(here, "enterprise_parks_glossary.json")):
         if os.path.exists(path):
             try:
+                mtime = os.path.getmtime(path)
+                if _glossary_cache is not None and mtime == _glossary_mtime:
+                    return _glossary_cache
                 with open(path, encoding="utf-8") as f:
                     _glossary_cache = json.load(f)
+                    _glossary_mtime = mtime
                     return _glossary_cache
             except Exception as e:
                 print(f"[Glossary] Failed to load {path}: {e}", flush=True)
-    _glossary_cache = {"brand_rules": [], "terms": []}
+    if _glossary_cache is None:
+        _glossary_cache = {"brand_rules": [], "terms": []}
     return _glossary_cache
 
 
 def glossary_prompt(target_keys: List[str]) -> str:
     g = load_brand_glossary()
-    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in target_keys])
+    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in target_keys if k])
+    # If only "en" was passed (e.g. Guest -> English turn), include all glossary target languages so
+    # localized terms spoken by the guest map back to their canonical English brand names.
+    non_en = [b for b in bases if b != "en"]
+    if not non_en:
+        non_en = ["es", "pt", "fr", "ja", "zh", "de"]
     lines = []
     for rule in g.get("brand_rules", []):
         lines.append(f"- {rule}")
@@ -429,10 +438,27 @@ def glossary_prompt(target_keys: List[str]) -> str:
         if not en:
             continue
         translations = term.get("translations", {})
-        parts = [f"{b}: {translations[b]}" for b in bases if b in translations]
+        parts = [f"{b}: {translations[b]}" for b in non_en if b in translations]
         suffix = " (keep original)" if term.get("keep_original") else ""
-        lines.append(f"- {en}{suffix}" + (f" -> {'; '.join(parts)}" if parts else ""))
+        lines.append(f"- {en}{suffix}" + (f" <-> {'; '.join(parts)}" if parts else ""))
     return "\n".join(lines)
+
+
+def brand_vocabulary(target_keys: Optional[List[str]] = None) -> List[str]:
+    """Return custom_vocabulary phrase list combining English brand terms and localized equivalents."""
+    g = load_brand_glossary()
+    phrases = list(pipeline.brand_phrases)
+    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in (target_keys or []) if k and k != "en"])
+    for term in g.get("terms", []):
+        en = (term.get("en") or "").strip()
+        if en:
+            phrases.append(en)
+        translations = term.get("translations", {})
+        for b in (bases or list(translations.keys())):
+            val = (translations.get(b) or "").strip()
+            if val:
+                phrases.append(val)
+    return _dedupe(phrases)[:100]
 
 
 def dlp_prompt(state: SessionState) -> str:
@@ -1475,16 +1501,17 @@ class GeminiLiveTranslateWorker(GeminiSpeechWorker):
             f"{dlp_prompt(self.state)}"
         )
         if self.state.use_glossary:
-            prompt += f"Brand terminology:\n{glossary_prompt([target['key']])}"
+            prompt += f"Brand terminology:\n{glossary_prompt([guest['key'], cast['key']])}"
         return prompt
 
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
+        vocab = brand_vocabulary([self.state.guest_lang, self.state.cast_lang])
         kwargs: Dict[str, Any] = {
             "response_modalities": ["AUDIO"],
             "input_audio_transcription": (
                 types.AudioTranscriptionConfig()
                 if minimal
-                else types.AudioTranscriptionConfig(custom_vocabulary=pipeline.brand_phrases)
+                else types.AudioTranscriptionConfig(custom_vocabulary=vocab)
             ),
             "output_audio_transcription": types.AudioTranscriptionConfig(),
             "translation_config": types.TranslationConfig(
@@ -1598,18 +1625,16 @@ class GeminiLive38Worker(GeminiSpeechWorker):
         smart = self.state.smart_detect
         if self.role == "cast-member":
             direction = f"Everything you hear is spoken by a staff member in {cast['label']}. Translate it into {guest['label']}."
-            targets = [guest["key"]]
         elif self.role == "guest":
             direction = (f"Everything you hear is spoken by a guest. Identify the language they speak and translate it into {cast['label']}."
                          if smart else f"Everything you hear is spoken by a guest in {guest['label']}. Translate it into {cast['label']}.")
-            targets = [cast["key"]]
         else:
             guest_desc = (f"another language (identify it; the most recent guest language was {guest['label']})"
                           if smart else guest["label"])
             direction = (f"Two people are talking: a staff member who speaks {cast['label']} and a guest who speaks {guest_desc}. "
                          f"When you hear {cast['label']}, translate it into the guest's language. "
                          f"When you hear any other language, translate it into {cast['label']}.")
-            targets = [guest["key"], cast["key"]]
+        targets = [guest["key"], cast["key"]]
         prompt = (
             "You are a professional real-time interpreter at a theme park and resort.\n"
             f"{direction}\n"
@@ -1624,6 +1649,7 @@ class GeminiLive38Worker(GeminiSpeechWorker):
         return prompt
 
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
+        vocab = brand_vocabulary([self.state.guest_lang, self.state.cast_lang])
         kwargs: Dict[str, Any] = {
             "response_modalities": ["AUDIO"],
             "system_instruction": self.system_prompt(),
@@ -1633,7 +1659,7 @@ class GeminiLive38Worker(GeminiSpeechWorker):
                 )
             ),
             "input_audio_transcription": (types.AudioTranscriptionConfig() if minimal
-                                          else types.AudioTranscriptionConfig(custom_vocabulary=pipeline.brand_phrases)),
+                                          else types.AudioTranscriptionConfig(custom_vocabulary=vocab)),
             "output_audio_transcription": types.AudioTranscriptionConfig(),
         }
         if not minimal:
@@ -1708,6 +1734,7 @@ async def translate_utterance_gemini35_live(pcm_bytes: bytes, state: SessionStat
     cast = lang_info(state.cast_lang)
     guest = lang_info(state.guest_lang)
     client = get_genai_client(GEMINI_LIVE_TRANSLATE_LOCATION)
+    vocab = brand_vocabulary([guest["key"], cast["key"]])
 
     async def _run_leg(role: str, target_info: Dict[str, str]) -> Dict[str, Any]:
         sys_prompt = (
@@ -1718,7 +1745,7 @@ async def translate_utterance_gemini35_live(pcm_bytes: bytes, state: SessionStat
             f"{dlp_prompt(state)}"
         )
         if state.use_glossary:
-            sys_prompt += f"Brand terminology:\n{glossary_prompt([target_info['key']])}"
+            sys_prompt += f"Brand terminology:\n{glossary_prompt([guest['key'], cast['key']])}"
 
         for minimal in (False, True):
             kwargs: Dict[str, Any] = {
@@ -1726,7 +1753,7 @@ async def translate_utterance_gemini35_live(pcm_bytes: bytes, state: SessionStat
                 "input_audio_transcription": (
                     types.AudioTranscriptionConfig()
                     if minimal
-                    else types.AudioTranscriptionConfig(custom_vocabulary=pipeline.brand_phrases)
+                    else types.AudioTranscriptionConfig(custom_vocabulary=vocab)
                 ),
                 "output_audio_transcription": types.AudioTranscriptionConfig(),
                 "translation_config": types.TranslationConfig(
