@@ -10,10 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Planned enhancements and upcoming changes go here before a release is tagged.
+
+---
+
+## [1.5.0] - 2026-11-11
+
+### Added
 - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`) Bidirectional 2-Way Streaming & System Prompt Support**:
-  - Verified and enabled `system_instruction` (Enterprise Brand Glossary + DLP/Model Armor rules), `custom_vocabulary` ASR biasing, and `speech_config` voice persona selection on `GeminiLiveTranslateWorker`.
-  - Added `GeminiLiveTranslateBidiWorker` for Continuous 2-Way hands-free conversations (`role="ambient"`), coordinating paired Cast $\rightarrow$ Guest and Guest $\rightarrow$ Cast sessions with `echo_target_language=False`, speaker-direction language filtering (`_ignore_input_lang`), automatic 1.35s silence turn finalization (`_idle_finalizer`), and automatic Cast $\rightarrow$ Guest hot-swap when Smart Guest Language Detection switches the guest language.
+  - Verified and enabled `system_instruction` (bidirectional `<->` Enterprise Brand Glossary + DLP/Model Armor rules), dynamic `custom_vocabulary` ASR biasing (`brand_vocabulary`), and `speech_config` voice persona selection on `GeminiLiveTranslateWorker`.
+  - Added `GeminiLiveTranslateBidiWorker` for Continuous 2-Way hands-free conversations (`role="ambient"`), coordinating paired Cast $\rightarrow$ Guest and Guest $\rightarrow$ Cast sessions with `echo_target_language=False`, speaker-direction language filtering (`_ignore_input_lang`), automatic 0.85s silence turn finalization (`_idle_finalizer`), and automatic Cast $\rightarrow$ Guest hot-swap when Smart Guest Language Detection switches the guest language.
   - Added `translate_utterance_gemini35_live` to support **Gemini 3.5 Live Translate** on multi-turn Recorded Audio Uploads (`/api/translate-audio`).
+  - Added `mtime`-aware `load_brand_glossary()` hot-reloading and automatic `gcloud auth print-access-token` local credential fallback (`get_gcp_credentials`).
 
 ---
 
