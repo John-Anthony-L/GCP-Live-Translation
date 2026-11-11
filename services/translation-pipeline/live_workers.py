@@ -31,7 +31,7 @@ from google.genai import types
 from google.api_core.client_options import ClientOptions
 from google.cloud import speech_v2
 
-from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
+from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG, get_gcp_credentials
 from languages import lang_info, resolve_language, same_language
 from pipeline import LiveTranslationPipeline, PROJECT_ID, LOCATION, CHIRP_REGION
 
@@ -365,8 +365,10 @@ def get_speech_v2_async_client() -> speech_v2.SpeechAsyncClient:
     """Created lazily so the gRPC aio channel binds to the running event loop."""
     global _speech_v2_async_client
     if _speech_v2_async_client is None:
+        creds = get_gcp_credentials(PROJECT_ID)
         _speech_v2_async_client = speech_v2.SpeechAsyncClient(
-            client_options=ClientOptions(api_endpoint=f"{CHIRP_REGION}-speech.googleapis.com")
+            credentials=creds,
+            client_options=ClientOptions(api_endpoint=f"{CHIRP_REGION}-speech.googleapis.com"),
         )
     return _speech_v2_async_client
 
@@ -376,10 +378,11 @@ _genai_clients: Dict[str, genai.Client] = {}
 
 def get_genai_client(location: str) -> genai.Client:
     if location not in _genai_clients:
+        creds = get_gcp_credentials(PROJECT_ID)
         try:
-            _genai_clients[location] = genai.Client(enterprise=True, project=PROJECT_ID, location=location)
+            _genai_clients[location] = genai.Client(enterprise=True, project=PROJECT_ID, location=location, credentials=creds)
         except Exception:
-            _genai_clients[location] = genai.Client(vertexai=True, project=PROJECT_ID, location=location)
+            _genai_clients[location] = genai.Client(vertexai=True, project=PROJECT_ID, location=location, credentials=creds)
     return _genai_clients[location]
 
 
@@ -394,30 +397,39 @@ def friendly_gemini_error(model: str, location: str, err: Exception) -> str:
 
 
 _glossary_cache: Optional[Dict[str, Any]] = None
+_glossary_mtime: float = 0.0
 
 
 def load_brand_glossary() -> Dict[str, Any]:
-    global _glossary_cache
-    if _glossary_cache is not None:
-        return _glossary_cache
+    global _glossary_cache, _glossary_mtime
     here = os.path.dirname(os.path.abspath(__file__))
     for path in ("/app/glossaries/enterprise_parks_glossary.json",
                  os.path.join(here, "../../glossaries/enterprise_parks_glossary.json"),
                  os.path.join(here, "enterprise_parks_glossary.json")):
         if os.path.exists(path):
             try:
+                mtime = os.path.getmtime(path)
+                if _glossary_cache is not None and mtime == _glossary_mtime:
+                    return _glossary_cache
                 with open(path, encoding="utf-8") as f:
                     _glossary_cache = json.load(f)
+                    _glossary_mtime = mtime
                     return _glossary_cache
             except Exception as e:
                 print(f"[Glossary] Failed to load {path}: {e}", flush=True)
-    _glossary_cache = {"brand_rules": [], "terms": []}
+    if _glossary_cache is None:
+        _glossary_cache = {"brand_rules": [], "terms": []}
     return _glossary_cache
 
 
 def glossary_prompt(target_keys: List[str]) -> str:
     g = load_brand_glossary()
-    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in target_keys])
+    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in target_keys if k])
+    # If only "en" was passed (e.g. Guest -> English turn), include all glossary target languages so
+    # localized terms spoken by the guest map back to their canonical English brand names.
+    non_en = [b for b in bases if b != "en"]
+    if not non_en:
+        non_en = ["es", "pt", "fr", "ja", "zh", "de"]
     lines = []
     for rule in g.get("brand_rules", []):
         lines.append(f"- {rule}")
@@ -426,10 +438,27 @@ def glossary_prompt(target_keys: List[str]) -> str:
         if not en:
             continue
         translations = term.get("translations", {})
-        parts = [f"{b}: {translations[b]}" for b in bases if b in translations]
+        parts = [f"{b}: {translations[b]}" for b in non_en if b in translations]
         suffix = " (keep original)" if term.get("keep_original") else ""
-        lines.append(f"- {en}{suffix}" + (f" -> {'; '.join(parts)}" if parts else ""))
+        lines.append(f"- {en}{suffix}" + (f" <-> {'; '.join(parts)}" if parts else ""))
     return "\n".join(lines)
+
+
+def brand_vocabulary(target_keys: Optional[List[str]] = None) -> List[str]:
+    """Return custom_vocabulary phrase list combining English brand terms and localized equivalents."""
+    g = load_brand_glossary()
+    phrases = list(pipeline.brand_phrases)
+    bases = _dedupe([lang_info(k)["mt"].split("-")[0] for k in (target_keys or []) if k and k != "en"])
+    for term in g.get("terms", []):
+        en = (term.get("en") or "").strip()
+        if en:
+            phrases.append(en)
+        translations = term.get("translations", {})
+        for b in (bases or list(translations.keys())):
+            val = (translations.get(b) or "").strip()
+            if val:
+                phrases.append(val)
+    return _dedupe(phrases)[:100]
 
 
 def dlp_prompt(state: SessionState) -> str:
@@ -528,9 +557,12 @@ class BaseStreamWorker:
         self._stop_time: Optional[float] = None
         self.last_chunk_time: Optional[float] = None
         self.segment_idx = 0
+        self._active_seg_id: Optional[str] = None
 
     @property
     def is_ptt(self) -> bool:
+        if self.parent is not None:
+            return self.parent.is_ptt
         return self.role in ("cast-member", "guest")
 
     @property
@@ -540,10 +572,20 @@ class BaseStreamWorker:
         return self._stop_time
 
     def current_segment_id(self) -> str:
-        return self.turn_id if self.is_ptt else f"{self.turn_id}-{self.segment_idx + 1}"
+        if self.is_ptt:
+            return self.turn_id
+        if self._active_seg_id is None:
+            if self.parent is not None:
+                self.parent.segment_idx += 1
+                self._active_seg_id = f"{self.parent.turn_id}-{self.parent.segment_idx}"
+            else:
+                self._active_seg_id = f"{self.turn_id}-{self.segment_idx + 1}"
+        return self._active_seg_id
 
     def advance_segment(self) -> None:
-        self.segment_idx += 1
+        self._active_seg_id = None
+        if self.parent is None:
+            self.segment_idx += 1
 
     def start(self) -> None:
         self.task = asyncio.create_task(self._safe_run())
@@ -988,6 +1030,17 @@ class GeminiSpeechWorker(BaseStreamWorker):
     def uses_manual_activity(self) -> bool:
         return False
 
+    def _ignore_input_lang(self, lang_code: Optional[str]) -> bool:
+        """In paired bidirectional mode (parent is not None), each leg only handles its speaker direction."""
+        if self.parent is None or not lang_code:
+            return False
+        is_cast_speech = same_language(lang_code, self.state.cast_lang)
+        if self.role == "cast-member":
+            return not is_cast_speech
+        if self.role == "guest":
+            return is_cast_speech
+        return False
+
     def _reset_segment(self) -> None:
         self.input_text = ""
         self.output_text = ""
@@ -1006,6 +1059,8 @@ class GeminiSpeechWorker(BaseStreamWorker):
         self.first_audio_sent = False
         self.audio_active = False
         self.last_audible_time: float = 0.0
+        self.segment_had_output = False
+        self.segment_ignored = False
 
     async def run(self) -> None:
         self.consumed: List[bytes] = []
@@ -1014,7 +1069,7 @@ class GeminiSpeechWorker(BaseStreamWorker):
         self.last_msg_time = time.time()
         self.last_active_time = time.time()
         self.turn_done = asyncio.Event()
-        self.segment_had_output = False
+        self._finalize_lock = asyncio.Lock()
         self._reset_segment()
 
         client = get_genai_client(self.location)
@@ -1036,8 +1091,25 @@ class GeminiSpeechWorker(BaseStreamWorker):
                                       "message": friendly_gemini_error(self.model, self.location, last_err)})
             return
         await self._flush_audio()
-        if self.is_ptt:
+        if self.is_ptt or (self.segment_had_output and (self.input_text.strip() or self.output_text.strip())):
             await self._finalize_segment()
+
+    async def _idle_finalizer(self) -> None:
+        """Periodically flushes tail audio and finalizes completed utterances in continuous mode."""
+        while not self.turn_done.is_set():
+            await asyncio.sleep(0.15)
+            if self.is_ptt:
+                continue
+            now = time.time()
+            if self.audio_active and (now - self.last_audible_time) >= 0.35:
+                await self._flush_audio()
+                self.audio_active = False
+            if self.segment_had_output and (now - self.last_active_time) >= 0.85:
+                await self._flush_audio()
+                await self._finalize_segment()
+            elif (self.segment_ignored or self.input_text) and not self.segment_had_output and (now - self.last_active_time) >= 1.2:
+                self.audio_buf.clear()
+                self._reset_segment()
 
     async def _session(self, client: genai.Client, minimal: bool) -> None:
         config = self.build_config(minimal=minimal)
@@ -1045,6 +1117,7 @@ class GeminiSpeechWorker(BaseStreamWorker):
             print(f"[{self.engine_key}] Connected turn={self.turn_id} role={self.role} minimal={minimal}", flush=True)
             send_task = asyncio.create_task(self._sender(session))
             recv_task = asyncio.create_task(self._receiver(session))
+            idle_task = asyncio.create_task(self._idle_finalizer())
             try:
                 await asyncio.wait({send_task, recv_task}, return_when=asyncio.FIRST_COMPLETED)
                 if recv_task.done() and not send_task.done() and not self.input_done:
@@ -1072,6 +1145,7 @@ class GeminiSpeechWorker(BaseStreamWorker):
                             break
                     await asyncio.sleep(0.08)
             finally:
+                idle_task.cancel()
                 recv_task.cancel()
             if recv_task.done() and not recv_task.cancelled() and recv_task.exception():
                 raise recv_task.exception()
@@ -1139,27 +1213,32 @@ class GeminiSpeechWorker(BaseStreamWorker):
                     continue
                 tr_in = sc.input_transcription
                 if tr_in and tr_in.text:
-                    self.last_active_time = now
-                    if self.first_input_tr_time is None:
-                        self.first_input_tr_time = now
-                    self.last_input_tr_time = now
-                    ref_in = (
-                        self.input_done_time
-                        or self.stop_time
-                        or self.speech_pause_ref_time
-                        or self.last_audible_input_time
-                        or self.first_audible_input_time
-                    )
-                    if ref_in is not None and now >= ref_in:
-                        delta_ms = round((now - ref_in) * 1000, 1)
-                        if delta_ms >= 10.0 or self.input_tr_latency_ms is None:
-                            self.input_tr_latency_ms = max(15.0, delta_ms)
-                    self.input_text += tr_in.text
-                    self.input_lang = getattr(tr_in, "language_code", None) or self.input_lang
-                    await safe_send(self.ws, {"type": "interim_transcript", "turnId": self.current_segment_id(),
-                                              "transcript": self.input_text.strip(), "speakerRole": self.role})
+                    in_lang = getattr(tr_in, "language_code", None) or self.input_lang
+                    if self._ignore_input_lang(in_lang):
+                        self.segment_ignored = True
+                        self.last_active_time = now
+                    elif not self.segment_ignored:
+                        self.last_active_time = now
+                        if self.first_input_tr_time is None:
+                            self.first_input_tr_time = now
+                        self.last_input_tr_time = now
+                        ref_in = (
+                            self.input_done_time
+                            or self.stop_time
+                            or self.speech_pause_ref_time
+                            or self.last_audible_input_time
+                            or self.first_audible_input_time
+                        )
+                        if ref_in is not None and now >= ref_in:
+                            delta_ms = round((now - ref_in) * 1000, 1)
+                            if delta_ms >= 10.0 or self.input_tr_latency_ms is None:
+                                self.input_tr_latency_ms = max(15.0, delta_ms)
+                        self.input_text += tr_in.text
+                        self.input_lang = in_lang
+                        await safe_send(self.ws, {"type": "interim_transcript", "turnId": self.current_segment_id(),
+                                                  "transcript": self.input_text.strip(), "speakerRole": self.role})
                 tr_out = sc.output_transcription
-                if tr_out and tr_out.text:
+                if tr_out and tr_out.text and not self.segment_ignored:
                     self.last_active_time = now
                     if self.first_output_tr_time is None:
                         self.first_output_tr_time = now
@@ -1168,7 +1247,7 @@ class GeminiSpeechWorker(BaseStreamWorker):
                     self.segment_had_output = True
                     await safe_send(self.ws, {"type": "interim_translation", "turnId": self.current_segment_id(),
                                               "translated_text": self.output_text.strip(), "speakerRole": self.role})
-                if sc.model_turn and sc.model_turn.parts:
+                if sc.model_turn and sc.model_turn.parts and not self.segment_ignored:
                     if self.first_model_turn_time is None:
                         self.first_model_turn_time = now
                     for part in sc.model_turn.parts:
@@ -1198,6 +1277,15 @@ class GeminiSpeechWorker(BaseStreamWorker):
                         await self._finalize_segment()
                     elif self.input_done:
                         self.turn_done.set()
+                elif not self.is_ptt:
+                    # Continuous simultaneous S2ST streams (gemini-3.5-live-translate-preview) emit silent keepalive
+                    # frames rather than `turn_complete=True`; auto-finalize once 1.35s of inactivity follows output.
+                    if self.segment_had_output and (now - self.last_active_time) >= 1.35:
+                        await self._flush_audio()
+                        await self._finalize_segment()
+                    elif (self.segment_ignored or self.input_text) and not self.segment_had_output and (now - self.last_active_time) >= 1.5:
+                        self.audio_buf.clear()
+                        self._reset_segment()
             if got_any:
                 empty_rounds = 0
             else:
@@ -1294,6 +1382,9 @@ class GeminiSpeechWorker(BaseStreamWorker):
             if self.is_ptt:
                 await safe_send(self.ws, {"type": "no_speech", "turnId": seg_id, "message": "No speech detected by the model"})
             return
+        if not self.is_ptt and not out:
+            # In continuous mode with echo_target_language=False, a leg that suppressed output does not emit a turn card
+            return
 
         if self.role == "cast-member":
             detected = detected or lang_info(self.state.cast_lang)["stt"]
@@ -1304,10 +1395,12 @@ class GeminiSpeechWorker(BaseStreamWorker):
             event = apply_guest_detection(self.state, detected, inp)
             if event:
                 await safe_send(self.ws, event)
+                if self.parent is not None and hasattr(self.parent, "on_guest_lang_changed"):
+                    self.parent.on_guest_lang_changed()
         eff_role, src, tgt = route_turn(self.state, self.role, detected)
 
         # GCP Model Armor + Cloud DLP screens both input (:sanitizeUserPrompt) and output (:sanitizeModelResponse) transcripts;
-        # for Gemini 3.8 Live, spoken audio is also protected via dynamic DLP + Model Armor system prompt
+        # for Gemini 3.5 Live Translate & Gemini 3.8 Live, spoken audio is also guided via dynamic DLP + Model Armor system prompt
         dlp_in = await asyncio.to_thread(
             dlp_manager.sanitize_text, inp, enabled=self.state.use_dlp,
             active_info_types=self.state.dlp_info_types, is_response=False
@@ -1318,7 +1411,12 @@ class GeminiSpeechWorker(BaseStreamWorker):
         )
         dlp_ms = round(dlp_in["latency_ms"] + dlp_out["latency_ms"], 2)
         total_ms = round((trans_ms or stt_ms) + tts_ms + dlp_ms, 1)
-        dlp_scope = "prompt_and_transcript" if (self.engine_key == ENGINE_LIVE_38 and self.state.use_dlp) else "transcript_only"
+        dlp_scope = (
+            "prompt_and_transcript"
+            if (self.engine_key in (ENGINE_LIVE_38, ENGINE_LIVE_TRANSLATE) and self.state.use_dlp)
+            else "transcript_only"
+        )
+        eff_glossary_mode = "prompt" if (self.glossary_mode == "prompt" and self.state.use_glossary) else "none"
         ma_enabled = bool(dlp_in.get("model_armor_enabled") or dlp_out.get("model_armor_enabled"))
         ma_blocked = bool(dlp_in.get("model_armor_blocked") or dlp_out.get("model_armor_blocked"))
         ma_verdict = dlp_in.get("model_armor_verdict") if dlp_in.get("model_armor_blocked") else (
@@ -1359,8 +1457,8 @@ class GeminiSpeechWorker(BaseStreamWorker):
         await safe_send(self.ws, {
             "type": "translation_text", "turnId": seg_id,
             "translated_text": translated_out,
-            "glossary_applied": self.glossary_mode == "prompt",
-            "glossary_mode": self.glossary_mode,
+            "glossary_applied": eff_glossary_mode == "prompt",
+            "glossary_mode": eff_glossary_mode,
             "translation_ms": trans_ms,
             "tts_ms": tts_ms,
             "dlp_ms": dlp_ms,
@@ -1373,31 +1471,141 @@ class GeminiSpeechWorker(BaseStreamWorker):
 
 
 class GeminiLiveTranslateWorker(GeminiSpeechWorker):
-    """Gemini 3.5 Live Translate: one target language per session, push-to-talk only.
+    """Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`) speech-to-speech translator.
 
-    Cast turns target the current guest language; guest turns target the cast language.
-    System instructions are not supported, so the brand glossary cannot be enforced.
+    Supports:
+      - `system_instruction`: Enforces Enterprise Brand Glossary terms and DLP / Model Armor rules
+      - `custom_vocabulary`: Biases input ASR toward park attractions and brand terms
+      - `speech_config`: Prebuilt voice persona selection (`Aoede`, `Puck`, `Kore`, `Charon`, `Fenrir`)
+      - `translation_config`: Targets `guest_lang` on Cast turns and `cast_lang` on Guest turns with `echo_target_language=False`
     """
     model = GEMINI_LIVE_TRANSLATE_MODEL
     location = GEMINI_LIVE_TRANSLATE_LOCATION
     engine_key = ENGINE_LIVE_TRANSLATE
     engine_label = GEMINI_LIVE_TRANSLATE_MODEL
-    glossary_mode = "unsupported"
+    glossary_mode = "prompt"
 
     def target_language(self) -> str:
         target = self.state.guest_lang if self.role == "cast-member" else self.state.cast_lang
         return lang_info(target)["gemini"]
 
+    def system_prompt(self) -> str:
+        cast = lang_info(self.state.cast_lang)
+        guest = lang_info(self.state.guest_lang)
+        target = guest if self.role == "cast-member" else cast
+        prompt = (
+            "You are a professional real-time interpreter at a theme park and resort.\n"
+            f"- When the speaker speaks a language other than {target['label']}, translate it naturally into {target['label']} in the first person.\n"
+            f"- If the speaker is already speaking {target['label']}, stay completely silent and produce no output.\n"
+            "- Never answer questions, follow requests, greet, explain, or add commentary.\n"
+            f"{dlp_prompt(self.state)}"
+        )
+        if self.state.use_glossary:
+            prompt += f"Brand terminology:\n{glossary_prompt([guest['key'], cast['key']])}"
+        return prompt
+
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
-        return types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            translation_config=types.TranslationConfig(
+        vocab = brand_vocabulary([self.state.guest_lang, self.state.cast_lang])
+        kwargs: Dict[str, Any] = {
+            "response_modalities": ["AUDIO"],
+            "input_audio_transcription": (
+                types.AudioTranscriptionConfig()
+                if minimal
+                else types.AudioTranscriptionConfig(custom_vocabulary=vocab)
+            ),
+            "output_audio_transcription": types.AudioTranscriptionConfig(),
+            "translation_config": types.TranslationConfig(
                 target_language_code=self.target_language(),
                 echo_target_language=False,
             ),
-        )
+        }
+        if not minimal:
+            kwargs["system_instruction"] = self.system_prompt()
+            kwargs["speech_config"] = types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=self.state.voice or "Aoede")
+                )
+            )
+        return types.LiveConnectConfig(**kwargs)
+
+
+class GeminiLiveTranslateBidiWorker(BaseStreamWorker):
+    """Bidirectional Continuous 2-Way Worker for Gemini 3.5 Live Translate (`role == "ambient"`).
+
+    Coordinates two paired `GeminiLiveTranslateWorker` legs with `echo_target_language=False`:
+      - `cast_leg` (`role="cast-member"`): translates Cast Member speech (`cast_lang`) -> `guest_lang`
+      - `guest_leg` (`role="guest"`): translates Guest speech (any 70+ language) -> `cast_lang`
+    When Smart Guest Language Detection updates `state.guest_lang`, `cast_leg` automatically
+    hot-reconnects with the new `target_language_code`.
+    """
+    engine_label = f"{GEMINI_LIVE_TRANSLATE_MODEL} (2-Way Bidirectional)"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cast_leg: Optional[GeminiLiveTranslateWorker] = None
+        self.guest_leg: Optional[GeminiLiveTranslateWorker] = None
+        self._active_guest_target: Optional[str] = None
+        self._restarting_cast = False
+
+    def _spawn_cast_leg(self) -> GeminiLiveTranslateWorker:
+        self._active_guest_target = lang_info(self.state.guest_lang)["gemini"]
+        leg = GeminiLiveTranslateWorker(self.ws, self.state, "cast-member", self.turn_id, parent=self)
+        leg.start()
+        return leg
+
+    def _spawn_guest_leg(self) -> GeminiLiveTranslateWorker:
+        leg = GeminiLiveTranslateWorker(self.ws, self.state, "guest", self.turn_id, parent=self)
+        leg.start()
+        return leg
+
+    def on_guest_lang_changed(self) -> None:
+        new_target = lang_info(self.state.guest_lang)["gemini"]
+        if new_target != self._active_guest_target and self.is_running and not self._restarting_cast:
+            self._restarting_cast = True
+            asyncio.create_task(self._hot_swap_cast_leg())
+
+    async def _hot_swap_cast_leg(self) -> None:
+        try:
+            old_leg = self.cast_leg
+            if self.is_running:
+                self.cast_leg = self._spawn_cast_leg()
+            if old_leg is not None:
+                await old_leg.stop(timeout=4.0)
+        finally:
+            self._restarting_cast = False
+
+    async def run(self) -> None:
+        self.cast_leg = self._spawn_cast_leg()
+        self.guest_leg = self._spawn_guest_leg()
+        for chunk in self.initial_chunks:
+            await self.cast_leg.push_audio(chunk)
+            await self.guest_leg.push_audio(chunk)
+        self.initial_chunks = []
+        try:
+            while not self.input_done:
+                chunk = await self.queue.get()
+                if chunk is None:
+                    self.input_done = True
+                    break
+                if self.cast_leg:
+                    await self.cast_leg.push_audio(chunk)
+                if self.guest_leg:
+                    await self.guest_leg.push_audio(chunk)
+        finally:
+            stops = []
+            if self.cast_leg:
+                stops.append(self.cast_leg.stop(timeout=8.0))
+            if self.guest_leg:
+                stops.append(self.guest_leg.stop(timeout=8.0))
+            if stops:
+                await asyncio.gather(*stops, return_exceptions=True)
+
+    def cancel(self) -> None:
+        super().cancel()
+        if self.cast_leg:
+            self.cast_leg.cancel()
+        if self.guest_leg:
+            self.guest_leg.cancel()
 
 
 class GeminiLive38Worker(GeminiSpeechWorker):
@@ -1417,18 +1625,16 @@ class GeminiLive38Worker(GeminiSpeechWorker):
         smart = self.state.smart_detect
         if self.role == "cast-member":
             direction = f"Everything you hear is spoken by a staff member in {cast['label']}. Translate it into {guest['label']}."
-            targets = [guest["key"]]
         elif self.role == "guest":
             direction = (f"Everything you hear is spoken by a guest. Identify the language they speak and translate it into {cast['label']}."
                          if smart else f"Everything you hear is spoken by a guest in {guest['label']}. Translate it into {cast['label']}.")
-            targets = [cast["key"]]
         else:
             guest_desc = (f"another language (identify it; the most recent guest language was {guest['label']})"
                           if smart else guest["label"])
             direction = (f"Two people are talking: a staff member who speaks {cast['label']} and a guest who speaks {guest_desc}. "
                          f"When you hear {cast['label']}, translate it into the guest's language. "
                          f"When you hear any other language, translate it into {cast['label']}.")
-            targets = [guest["key"], cast["key"]]
+        targets = [guest["key"], cast["key"]]
         prompt = (
             "You are a professional real-time interpreter at a theme park and resort.\n"
             f"{direction}\n"
@@ -1443,6 +1649,7 @@ class GeminiLive38Worker(GeminiSpeechWorker):
         return prompt
 
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
+        vocab = brand_vocabulary([self.state.guest_lang, self.state.cast_lang])
         kwargs: Dict[str, Any] = {
             "response_modalities": ["AUDIO"],
             "system_instruction": self.system_prompt(),
@@ -1452,7 +1659,7 @@ class GeminiLive38Worker(GeminiSpeechWorker):
                 )
             ),
             "input_audio_transcription": (types.AudioTranscriptionConfig() if minimal
-                                          else types.AudioTranscriptionConfig(custom_vocabulary=pipeline.brand_phrases)),
+                                          else types.AudioTranscriptionConfig(custom_vocabulary=vocab)),
             "output_audio_transcription": types.AudioTranscriptionConfig(),
         }
         if not minimal:
@@ -1503,7 +1710,7 @@ def create_stream_worker(
     engine = (stt_model or state.engine or ENGINE_CHIRP3).lower()
     if engine == ENGINE_LIVE_TRANSLATE:
         if eff_role == "ambient":
-            return None  # push-to-talk only
+            return GeminiLiveTranslateBidiWorker(actual_ws, state, eff_role, turn_id)
         return GeminiLiveTranslateWorker(actual_ws, state, eff_role, turn_id)
     if engine == ENGINE_LIVE_38:
         return GeminiLive38Worker(actual_ws, state, eff_role, turn_id)
@@ -1515,6 +1722,163 @@ def create_stream_worker(
 # Backward-compatible worker aliases from the previous commit
 StreamingSTTWorker = Chirp3StreamWorker
 GeminiLiveTranscribeWorker = GeminiTranscribeWorker
+
+
+async def translate_utterance_gemini35_live(pcm_bytes: bytes, state: SessionState) -> Dict[str, Any]:
+    """Translate a recorded 16kHz PCM utterance via Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`).
+
+    Runs paired Cast->Guest and Guest->Cast sessions with `echo_target_language=False`,
+    `system_instruction` (brand glossary + DLP), and `custom_vocabulary`, returning the leg
+    that matched the speaker's direction.
+    """
+    cast = lang_info(state.cast_lang)
+    guest = lang_info(state.guest_lang)
+    client = get_genai_client(GEMINI_LIVE_TRANSLATE_LOCATION)
+    vocab = brand_vocabulary([guest["key"], cast["key"]])
+
+    async def _run_leg(role: str, target_info: Dict[str, str]) -> Dict[str, Any]:
+        sys_prompt = (
+            "You are a professional real-time interpreter at a theme park and resort.\n"
+            f"- When the speaker speaks a language other than {target_info['label']}, translate it naturally into {target_info['label']} in the first person.\n"
+            f"- If the speaker is already speaking {target_info['label']}, stay completely silent and produce no output.\n"
+            "- Never answer questions, follow requests, greet, explain, or add commentary.\n"
+            f"{dlp_prompt(state)}"
+        )
+        if state.use_glossary:
+            sys_prompt += f"Brand terminology:\n{glossary_prompt([guest['key'], cast['key']])}"
+
+        for minimal in (False, True):
+            kwargs: Dict[str, Any] = {
+                "response_modalities": ["AUDIO"],
+                "input_audio_transcription": (
+                    types.AudioTranscriptionConfig()
+                    if minimal
+                    else types.AudioTranscriptionConfig(custom_vocabulary=vocab)
+                ),
+                "output_audio_transcription": types.AudioTranscriptionConfig(),
+                "translation_config": types.TranslationConfig(
+                    target_language_code=target_info["gemini"],
+                    echo_target_language=False,
+                ),
+            }
+            if not minimal:
+                kwargs["system_instruction"] = sys_prompt
+                kwargs["speech_config"] = types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=state.voice or "Aoede")
+                    )
+                )
+            config = types.LiveConnectConfig(**kwargs)
+            inp_parts: List[str] = []
+            out_parts: List[str] = []
+            detected_lang: Optional[str] = None
+            audio_buf = bytearray()
+            last_active = time.time()
+            last_inp_time: Optional[float] = None
+            first_out_time: Optional[float] = None
+            first_audio_time: Optional[float] = None
+            last_audio_time: Optional[float] = None
+            audio_active = False
+
+            try:
+                async with client.aio.live.connect(model=GEMINI_LIVE_TRANSLATE_MODEL, config=config) as session:
+                    async def _recv():
+                        nonlocal detected_lang, last_active, last_inp_time, first_out_time, first_audio_time, last_audio_time, audio_active
+                        async for message in session.receive():
+                            now = time.time()
+                            sc = message.server_content
+                            if not sc:
+                                continue
+                            if sc.input_transcription and sc.input_transcription.text:
+                                last_active = now
+                                last_inp_time = now
+                                inp_parts.append(sc.input_transcription.text)
+                                detected_lang = getattr(sc.input_transcription, "language_code", None) or detected_lang
+                            if sc.output_transcription and sc.output_transcription.text:
+                                last_active = now
+                                if first_out_time is None:
+                                    first_out_time = now
+                                out_parts.append(sc.output_transcription.text)
+                            if sc.model_turn and sc.model_turn.parts:
+                                for part in sc.model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        data = part.inline_data.data
+                                        audible = _pcm_is_audible(data)
+                                        if audible:
+                                            audio_active = True
+                                            last_active = now
+                                            last_audio_time = now
+                                            if first_audio_time is None:
+                                                first_audio_time = now
+                                            if first_out_time is None:
+                                                first_out_time = now
+                                        if audio_active and (audible or (now - (last_audio_time or now)) < 0.35):
+                                            audio_buf.extend(data)
+                                        elif audio_active and (now - (last_audio_time or now)) >= 0.35:
+                                            audio_active = False
+
+                    recv_task = asyncio.create_task(_recv())
+                    try:
+                        for piece in _split_audio(pcm_bytes, 3200):
+                            await session.send_realtime_input(audio=types.Blob(data=piece, mime_type="audio/pcm;rate=16000"))
+                            await asyncio.sleep(0.02)
+                        silence = b"\x00" * 3200
+                        for _ in range(14):
+                            await session.send_realtime_input(audio=types.Blob(data=silence, mime_type="audio/pcm;rate=16000"))
+                            await asyncio.sleep(0.03)
+                        sent_time = time.time()
+                        await session.send_realtime_input(audio_stream_end=True)
+
+                        deadline = time.time() + 14.0
+                        while time.time() < deadline and not recv_task.done():
+                            now = time.time()
+                            if (out_parts or audio_buf) and (now - max(last_active, sent_time)) > 1.35:
+                                break
+                            if not out_parts and not audio_buf and (now - sent_time) > 3.0:
+                                break
+                            await asyncio.sleep(0.08)
+                    finally:
+                        recv_task.cancel()
+
+                end_ref = last_audio_time or last_active or time.time()
+                stt_ref = last_inp_time or first_out_time or end_ref
+                first_out_ref = first_audio_time or first_out_time or end_ref
+                stt_ms = round(max(20.0, (stt_ref - sent_time) * 1000), 2)
+                translation_ms = round(max(25.0, (first_out_ref - sent_time) * 1000), 2)
+                tts_ms = round(max(20.0, (end_ref - first_out_ref) * 1000), 2) if audio_buf else 0.0
+                return {
+                    "role": role,
+                    "transcript": "".join(inp_parts).strip(),
+                    "translated_text": "".join(out_parts).strip(),
+                    "detected_lang": detected_lang,
+                    "audio_pcm": bytes(audio_buf),
+                    "stt_ms": stt_ms,
+                    "translation_ms": translation_ms,
+                    "tts_ms": tts_ms,
+                    "latency_ms": round(max(stt_ms, translation_ms) + tts_ms, 2),
+                    "model": GEMINI_LIVE_TRANSLATE_MODEL,
+                    "voice": f"{GEMINI_LIVE_TRANSLATE_MODEL} ({state.voice or 'Aoede'})",
+                }
+            except Exception as err:
+                if not minimal:
+                    continue
+                raise err
+        raise RuntimeError("Gemini 3.5 Live Translate upload leg failed")
+
+    if same_language(state.cast_lang, state.guest_lang):
+        return await _run_leg("cast-member", guest)
+
+    cast_res, guest_res = await asyncio.gather(
+        _run_leg("cast-member", guest),
+        _run_leg("guest", cast),
+    )
+    det_lang = guest_res.get("detected_lang") or cast_res.get("detected_lang")
+    if det_lang and not same_language(det_lang, state.cast_lang):
+        if guest_res.get("translated_text") or guest_res.get("audio_pcm"):
+            return guest_res
+    if guest_res.get("translated_text") and not cast_res.get("translated_text"):
+        return guest_res
+    return cast_res
 
 
 async def translate_utterance_gemini38(pcm_bytes: bytes, state: SessionState) -> Dict[str, Any]:

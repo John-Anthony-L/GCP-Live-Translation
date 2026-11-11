@@ -74,17 +74,22 @@ def trim_pcm_silence(pcm_data: bytes, threshold: int = 350) -> bytes:
 
 class LiveTranslationPipeline:
     def __init__(self):
-        self.speech_client = speech.SpeechClient()
-        self.speech_async_client = speech.SpeechAsyncClient()
+        from dlp_helper import get_gcp_credentials
+        creds = get_gcp_credentials(PROJECT_ID)
+        self._creds = creds
+        self.speech_client = speech.SpeechClient(credentials=creds)
+        self.speech_async_client = speech.SpeechAsyncClient(credentials=creds)
         self.chirp_region = CHIRP_REGION
         self.speech_v2_client = speech_v2.SpeechClient(
-            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com")
+            credentials=creds,
+            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com"),
         )
         self.speech_v2_async_client = speech_v2.SpeechAsyncClient(
-            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com")
+            credentials=creds,
+            client_options=ClientOptions(api_endpoint=f"{self.chirp_region}-speech.googleapis.com"),
         )
-        self.translate_client = translate.TranslationServiceClient()
-        self.tts_client = texttospeech.TextToSpeechClient()
+        self.translate_client = translate.TranslationServiceClient(credentials=creds)
+        self.tts_client = texttospeech.TextToSpeechClient(credentials=creds)
         self._genai_transcribe_client = None
         
         self.chirp3_en_recognizer = f"projects/{PROJECT_ID}/locations/{self.chirp_region}/recognizers/live-translation-recognizer"
@@ -109,11 +114,11 @@ class LiveTranslationPipeline:
         if self._genai_transcribe_client is None:
             try:
                 self._genai_transcribe_client = genai.Client(
-                    enterprise=True, project=PROJECT_ID, location=GEMINI_TRANSCRIBE_LOCATION
+                    enterprise=True, project=PROJECT_ID, location=GEMINI_TRANSCRIBE_LOCATION, credentials=self._creds
                 )
             except Exception:
                 self._genai_transcribe_client = genai.Client(
-                    vertexai=True, project=PROJECT_ID, location=GEMINI_TRANSCRIBE_LOCATION
+                    vertexai=True, project=PROJECT_ID, location=GEMINI_TRANSCRIBE_LOCATION, credentials=self._creds
                 )
         return self._genai_transcribe_client
 
