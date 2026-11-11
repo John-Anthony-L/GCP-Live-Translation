@@ -116,6 +116,65 @@ DEFAULT_STD_TYPES = {"CREDIT_CARD_NUMBER", "PHONE_NUMBER", "EMAIL_ADDRESS", "US_
 COPPA_STD_TYPES = {"CREDIT_CARD_NUMBER", "PHONE_NUMBER", "EMAIL_ADDRESS", "US_PASSPORT", "PERSON_NAME"}
 
 
+_shared_creds = None
+
+
+class _GcloudCliCredentials(google.auth.credentials.Credentials if google else object):
+    """Fallback credentials using `gcloud auth print-access-token` when local ADC is expired."""
+
+    def __init__(self, quota_project_id: Optional[str] = None):
+        if google:
+            super().__init__()
+        self._quota_project_id = quota_project_id
+        self.token = None
+        self.expiry = None
+
+    @property
+    def quota_project_id(self) -> Optional[str]:
+        return self._quota_project_id
+
+    def refresh(self, request) -> None:
+        import datetime
+        import subprocess
+        self.token = subprocess.check_output(
+            ["gcloud", "auth", "print-access-token"], text=True, timeout=5.0
+        ).strip()
+        self.expiry = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=45)
+
+
+def get_gcp_credentials(project_id: Optional[str] = None):
+    """Return valid Google Cloud credentials, falling back to `gcloud auth print-access-token` locally if ADC expired."""
+    global _shared_creds
+    quota_proj = project_id if (project_id and project_id != "your-gcp-project-id") else None
+    if _shared_creds is not None:
+        try:
+            if not _shared_creds.valid or _shared_creds.expired or not _shared_creds.token:
+                _shared_creds.refresh(GoogleAuthRequest() if GoogleAuthRequest else None)
+            return _shared_creds
+        except Exception:
+            _shared_creds = None
+    if google is not None and GoogleAuthRequest is not None:
+        try:
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                quota_project_id=quota_proj,
+            )
+            if not creds.valid or creds.expired or not creds.token:
+                creds.refresh(GoogleAuthRequest())
+            _shared_creds = creds
+            return _shared_creds
+        except Exception:
+            pass
+    try:
+        cli_creds = _GcloudCliCredentials(quota_project_id=quota_proj)
+        cli_creds.refresh(None)
+        _shared_creds = cli_creds
+        return _shared_creds
+    except Exception as e:
+        print(f"[Auth] Could not obtain GCP credentials: {e}", flush=True)
+        return None
+
+
 class LiveTranslationDLPManager:
     """
     Google Cloud Model Armor + Sensitive Data Protection (Cloud DLP) Service for Enterprise Live Translation.
@@ -133,22 +192,14 @@ class LiveTranslationDLPManager:
         self._http = requests.Session()
         try:
             if dlp_v2 is not None:
-                self.dlp_client = dlp_v2.DlpServiceClient()
+                creds = get_gcp_credentials(project_id)
+                self.dlp_client = dlp_v2.DlpServiceClient(credentials=creds) if creds else dlp_v2.DlpServiceClient()
         except Exception as e:
             print(f"[LiveTranslationDLP] Could not initialize DlpServiceClient ({e}). Using local regex engine.", flush=True)
 
     def _get_auth_token(self) -> Optional[str]:
-        if google is None or GoogleAuthRequest is None:
-            return None
-        try:
-            if self._creds is None:
-                self._creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            if not self._creds.valid or self._creds.expired or not self._creds.token:
-                self._creds.refresh(GoogleAuthRequest())
-            return self._creds.token
-        except Exception as e:
-            print(f"[ModelArmor] Auth token error: {e}", flush=True)
-            return None
+        creds = get_gcp_credentials(self.project_id)
+        return creds.token if creds else None
 
     def get_catalog(self) -> List[Dict[str, Any]]:
         seen = set()

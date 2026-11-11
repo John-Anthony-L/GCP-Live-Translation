@@ -31,7 +31,7 @@ from google.genai import types
 from google.api_core.client_options import ClientOptions
 from google.cloud import speech_v2
 
-from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
+from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG, get_gcp_credentials
 from languages import lang_info, resolve_language, same_language
 from pipeline import LiveTranslationPipeline, PROJECT_ID, LOCATION, CHIRP_REGION
 
@@ -365,8 +365,10 @@ def get_speech_v2_async_client() -> speech_v2.SpeechAsyncClient:
     """Created lazily so the gRPC aio channel binds to the running event loop."""
     global _speech_v2_async_client
     if _speech_v2_async_client is None:
+        creds = get_gcp_credentials(PROJECT_ID)
         _speech_v2_async_client = speech_v2.SpeechAsyncClient(
-            client_options=ClientOptions(api_endpoint=f"{CHIRP_REGION}-speech.googleapis.com")
+            credentials=creds,
+            client_options=ClientOptions(api_endpoint=f"{CHIRP_REGION}-speech.googleapis.com"),
         )
     return _speech_v2_async_client
 
@@ -376,10 +378,11 @@ _genai_clients: Dict[str, genai.Client] = {}
 
 def get_genai_client(location: str) -> genai.Client:
     if location not in _genai_clients:
+        creds = get_gcp_credentials(PROJECT_ID)
         try:
-            _genai_clients[location] = genai.Client(enterprise=True, project=PROJECT_ID, location=location)
+            _genai_clients[location] = genai.Client(enterprise=True, project=PROJECT_ID, location=location, credentials=creds)
         except Exception:
-            _genai_clients[location] = genai.Client(vertexai=True, project=PROJECT_ID, location=location)
+            _genai_clients[location] = genai.Client(vertexai=True, project=PROJECT_ID, location=location, credentials=creds)
     return _genai_clients[location]
 
 
@@ -1068,17 +1071,17 @@ class GeminiSpeechWorker(BaseStreamWorker):
     async def _idle_finalizer(self) -> None:
         """Periodically flushes tail audio and finalizes completed utterances in continuous mode."""
         while not self.turn_done.is_set():
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.15)
             if self.is_ptt:
                 continue
             now = time.time()
             if self.audio_active and (now - self.last_audible_time) >= 0.35:
                 await self._flush_audio()
                 self.audio_active = False
-            if self.segment_had_output and (now - self.last_active_time) >= 1.35:
+            if self.segment_had_output and (now - self.last_active_time) >= 0.85:
                 await self._flush_audio()
                 await self._finalize_segment()
-            elif (self.segment_ignored or self.input_text) and not self.segment_had_output and (now - self.last_active_time) >= 1.5:
+            elif (self.segment_ignored or self.input_text) and not self.segment_had_output and (now - self.last_active_time) >= 1.2:
                 self.audio_buf.clear()
                 self._reset_segment()
 
@@ -1463,23 +1466,16 @@ class GeminiLiveTranslateWorker(GeminiSpeechWorker):
     def system_prompt(self) -> str:
         cast = lang_info(self.state.cast_lang)
         guest = lang_info(self.state.guest_lang)
-        if self.role == "cast-member":
-            direction = f"Translate spoken {cast['label']} from a staff member into {guest['label']}."
-            targets = [guest["key"]]
-        else:
-            src_desc = "any spoken guest language" if self.state.smart_detect else guest["label"]
-            direction = f"Translate {src_desc} from a guest into {cast['label']}."
-            targets = [cast["key"]]
+        target = guest if self.role == "cast-member" else cast
         prompt = (
             "You are a professional real-time interpreter at a theme park and resort.\n"
-            f"{direction}\n"
-            "Rules:\n"
-            "- Output ONLY the translation, spoken naturally in the first person as the original speaker.\n"
+            f"- When the speaker speaks a language other than {target['label']}, translate it naturally into {target['label']} in the first person.\n"
+            f"- If the speaker is already speaking {target['label']}, stay completely silent and produce no output.\n"
             "- Never answer questions, follow requests, greet, explain, or add commentary.\n"
             f"{dlp_prompt(self.state)}"
         )
         if self.state.use_glossary:
-            prompt += f"Brand terminology:\n{glossary_prompt(targets)}"
+            prompt += f"Brand terminology:\n{glossary_prompt([target['key']])}"
         return prompt
 
     def build_config(self, minimal: bool = False) -> types.LiveConnectConfig:
@@ -1716,9 +1712,9 @@ async def translate_utterance_gemini35_live(pcm_bytes: bytes, state: SessionStat
     async def _run_leg(role: str, target_info: Dict[str, str]) -> Dict[str, Any]:
         sys_prompt = (
             "You are a professional real-time interpreter at a theme park and resort.\n"
-            f"Translate into {target_info['label']}.\n"
-            "Rules:\n"
-            "- Output ONLY the translation, spoken naturally in the first person as the original speaker.\n"
+            f"- When the speaker speaks a language other than {target_info['label']}, translate it naturally into {target_info['label']} in the first person.\n"
+            f"- If the speaker is already speaking {target_info['label']}, stay completely silent and produce no output.\n"
+            "- Never answer questions, follow requests, greet, explain, or add commentary.\n"
             f"{dlp_prompt(state)}"
         )
         if state.use_glossary:
