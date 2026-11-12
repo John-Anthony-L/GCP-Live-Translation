@@ -59,18 +59,18 @@ def create_translation_api_glossary(gcs_uri: str, source_lang="en", target_lang=
     return result
 
 def get_glossary_candidates(source_lang="en", target_lang="es"):
-    """Return ordered candidate glossary configs (new brand-* ID first, then legacy disney-* ID)."""
+    """Return ordered candidate glossary configs for Cloud Translation v3."""
     src = source_lang.lower().split("-")[0]
     tgt = target_lang.lower().split("-")[0]
 
     base_glossary = os.getenv("GLOSSARY_ID", "brand-parks-glossary-en-es")
     candidates = []
     if src == "en" and tgt == "es":
-        candidates = [base_glossary, "disney-parks-glossary-en-es"]
+        candidates = [base_glossary, "enterprise-parks-glossary-en-es"]
     elif src == "es" and tgt == "en":
-        candidates = [base_glossary.replace("en-es", "es-en"), "disney-parks-glossary-es-en"]
+        candidates = [base_glossary.replace("en-es", "es-en"), "enterprise-parks-glossary-es-en"]
     else:
-        candidates = [f"brand-glossary-{src}-{tgt}", f"disney-glossary-{src}-{tgt}"]
+        candidates = [f"brand-glossary-{src}-{tgt}", f"enterprise-glossary-{src}-{tgt}"]
 
     seen = []
     configs = []

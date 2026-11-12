@@ -10,7 +10,7 @@ const TRANSLATION_PIPELINE_URL = process.env.TRANSLATION_PIPELINE_URL || 'http:/
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Directory to store saved conversations
+// Local cache directory (fallback when offline; primary storage is Google Cloud Storage via translation-pipeline)
 const CONVERSATIONS_DIR = path.resolve(__dirname, 'conversations_data');
 if (!fs.existsSync(CONVERSATIONS_DIR)) {
   try {
@@ -19,105 +19,6 @@ if (!fs.existsSync(CONVERSATIONS_DIR)) {
     console.warn('Could not create conversations directory:', e.message);
   }
 }
-
-// Conversation Storage API endpoints
-app.get('/api/conversations', (req, res) => {
-  try {
-    if (!fs.existsSync(CONVERSATIONS_DIR)) {
-      return res.json([]);
-    }
-    const files = fs.readdirSync(CONVERSATIONS_DIR).filter(f => f.endsWith('.json'));
-    const conversations = [];
-    for (const f of files) {
-      try {
-        const filePath = path.join(CONVERSATIONS_DIR, f);
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        conversations.push({
-          id: data.id || f.replace('.json', ''),
-          title: data.title || 'Untitled Conversation',
-          sourceLang: data.sourceLang || 'en',
-          targetLang: data.targetLang || 'es',
-          mode: data.mode || 'live',
-          createdAt: data.createdAt || fs.statSync(filePath).mtime.toISOString(),
-          turnCount: data.turns ? data.turns.length : 0,
-          hasAudio: Boolean(
-            data.audioBase64 ||
-            (data.turns && data.turns.some(t => t.audioBase64)) ||
-            (data.metadata && Array.isArray(data.metadata.synthesizedPcmChunks) && data.metadata.synthesizedPcmChunks.length > 0)
-          )
-        });
-      } catch (err) {
-        console.error('Error reading conversation file:', f, err);
-      }
-    }
-    // Sort descending by creation date
-    conversations.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    res.json(conversations);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list conversations', message: err.message });
-  }
-});
-
-app.get('/api/conversations/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
-    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Conversation not found' });
-    }
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to read conversation', message: err.message });
-  }
-});
-
-app.post('/api/conversations', (req, res) => {
-  try {
-    const conversation = req.body;
-    if (!conversation || !conversation.turns) {
-      return res.status(400).json({ error: 'Invalid conversation payload: turns array required.' });
-    }
-    const id = conversation.id || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    const record = {
-      id,
-      title: conversation.title || `Conversation (${new Date().toLocaleDateString()})`,
-      sourceLang: conversation.sourceLang || 'en',
-      targetLang: conversation.targetLang || 'es',
-      mode: conversation.mode || 'live', // 'live' | 'recorded-upload'
-      createdAt: conversation.createdAt || new Date().toISOString(),
-      turns: conversation.turns || [],
-      metadata: conversation.metadata || {}
-    };
-
-    if (!fs.existsSync(CONVERSATIONS_DIR)) {
-      fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
-    }
-    const filePath = path.join(CONVERSATIONS_DIR, `${id}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf8');
-
-    res.json({ success: true, conversation: record });
-  } catch (err) {
-    console.error('Error saving conversation:', err);
-    res.status(500).json({ error: 'Failed to save conversation', message: err.message });
-  }
-});
-
-app.delete('/api/conversations/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
-    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return res.json({ success: true, message: 'Conversation deleted.' });
-    }
-    res.status(404).json({ error: 'Conversation not found.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete conversation', message: err.message });
-  }
-});
 
 // Cached Cloud Run metadata identity token for service-to-service calls when allUsers is restricted
 let _cachedIdToken = null;
@@ -152,6 +53,171 @@ async function getPipelineHeaders(pipelineHost, extraHeaders = {}) {
   }
   return headers;
 }
+
+// Conversation Storage API endpoints (persisted to Google Cloud Storage bucket via translation-pipeline)
+app.get('/api/conversations', async (req, res) => {
+  try {
+    const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const headers = await getPipelineHeaders(pipelineHost);
+    const fetchRes = await fetch(`${pipelineHost}/api/conversations`, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (fetchRes.ok) {
+      const data = await fetchRes.json();
+      return res.json(data);
+    }
+  } catch (err) {
+    console.warn('GCS pipeline conversations list fallback to local:', err.message);
+  }
+
+  try {
+    if (!fs.existsSync(CONVERSATIONS_DIR)) {
+      return res.json([]);
+    }
+    const files = fs.readdirSync(CONVERSATIONS_DIR).filter(f => f.endsWith('.json'));
+    const conversations = [];
+    for (const f of files) {
+      try {
+        const filePath = path.join(CONVERSATIONS_DIR, f);
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        conversations.push({
+          id: data.id || f.replace('.json', ''),
+          title: data.title || 'Untitled Conversation',
+          sourceLang: data.sourceLang || 'en',
+          targetLang: data.targetLang || 'es',
+          mode: data.mode || 'live',
+          createdAt: data.createdAt || fs.statSync(filePath).mtime.toISOString(),
+          turnCount: data.turns ? data.turns.length : 0,
+          hasAudio: Boolean(
+            data.audioBase64 ||
+            (data.turns && data.turns.some(t => t.audioBase64)) ||
+            (data.metadata && Array.isArray(data.metadata.synthesizedPcmChunks) && data.metadata.synthesizedPcmChunks.length > 0)
+          )
+        });
+      } catch (err) {
+        console.error('Error reading conversation file:', f, err);
+      }
+    }
+    conversations.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json(conversations);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list conversations', message: err.message });
+  }
+});
+
+app.get('/api/conversations/:id', async (req, res) => {
+  const { id } = req.params;
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  try {
+    const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const headers = await getPipelineHeaders(pipelineHost);
+    const fetchRes = await fetch(`${pipelineHost}/api/conversations/${encodeURIComponent(safeId)}`, {
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (fetchRes.ok) {
+      const data = await fetchRes.json();
+      return res.json(data);
+    }
+  } catch (err) {
+    console.warn(`GCS pipeline conversation get (${safeId}) fallback to local:`, err.message);
+  }
+
+  try {
+    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read conversation', message: err.message });
+  }
+});
+
+app.post('/api/conversations', async (req, res) => {
+  try {
+    const conversation = req.body;
+    if (!conversation || !conversation.turns) {
+      return res.status(400).json({ error: 'Invalid conversation payload: turns array required.' });
+    }
+    const id = conversation.id || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const record = {
+      id,
+      title: conversation.title || `Conversation (${new Date().toLocaleDateString()})`,
+      sourceLang: conversation.sourceLang || 'en',
+      targetLang: conversation.targetLang || 'es',
+      mode: conversation.mode || 'live',
+      createdAt: conversation.createdAt || new Date().toISOString(),
+      turns: conversation.turns || [],
+      metadata: conversation.metadata || {},
+      audioBase64: conversation.audioBase64 || undefined,
+    };
+
+    try {
+      const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+      const headers = await getPipelineHeaders(pipelineHost, { 'Content-Type': 'application/json' });
+      const fetchRes = await fetch(`${pipelineHost}/api/conversations`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(record),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (fetchRes.ok) {
+        const gcsData = await fetchRes.json();
+        return res.json(gcsData);
+      }
+    } catch (gcsErr) {
+      console.warn('GCS pipeline conversation save fallback to local:', gcsErr.message);
+    }
+
+    if (!fs.existsSync(CONVERSATIONS_DIR)) {
+      fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+    }
+    const filePath = path.join(CONVERSATIONS_DIR, `${id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf8');
+
+    res.json({ success: true, conversation: record });
+  } catch (err) {
+    console.error('Error saving conversation:', err);
+    res.status(500).json({ error: 'Failed to save conversation', message: err.message });
+  }
+});
+
+app.delete('/api/conversations/:id', async (req, res) => {
+  const { id } = req.params;
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  let deletedFromGcs = false;
+  try {
+    const pipelineHost = TRANSLATION_PIPELINE_URL.replace(/\/$/, '');
+    const headers = await getPipelineHeaders(pipelineHost);
+    const fetchRes = await fetch(`${pipelineHost}/api/conversations/${encodeURIComponent(safeId)}`, {
+      method: 'DELETE',
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (fetchRes.ok) {
+      deletedFromGcs = true;
+    }
+  } catch (err) {
+    console.warn(`GCS pipeline conversation delete (${safeId}) error:`, err.message);
+  }
+
+  try {
+    const filePath = path.join(CONVERSATIONS_DIR, `${safeId}.json`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      deletedFromGcs = true;
+    }
+    if (deletedFromGcs) {
+      return res.json({ success: true, message: 'Conversation deleted.' });
+    }
+    res.status(404).json({ error: 'Conversation not found.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete conversation', message: err.message });
+  }
+});
 
 // Proxy route for audio translation (recorded upload)
 app.post('/api/translate-audio-proxy', async (req, res) => {
@@ -384,7 +450,7 @@ const DEFAULT_DLP_CATALOG = [
     displayName: "Email Addresses",
     category: "Contact Info",
     icon: "📧",
-    description: "Guest and Cast Member personal/work email addresses",
+    description: "Guest and Team Host personal/work email addresses",
     placeholder: "[EMAIL_REDACTED]",
     defaultEnabled: true
   },
@@ -484,21 +550,21 @@ app.post('/api/dlp/sanitize', async (req, res) => {
         sanitized = sanitized.replace(cc, "[CREDIT_CARD_REDACTED]");
       }
     }
-    if (info_types.includes("RESERVATION_CONFIRMATION_ID") || info_types.includes("DISNEY_RESERVATION_ID") || info_types.length === 0) {
-      const resPat = /(?:RES|RESV|BKG|CONF|BOOKING|WDW|DLR)[-#\s]?\d{5,10}/gi;
+    if (info_types.includes("RESERVATION_CONFIRMATION_ID") || info_types.includes("RESERVATION_ID") || info_types.length === 0) {
+      const resPat = /(?:RES|RESV|BKG|CONF|BOOKING|PRK|RST)[-#\s]?\d{5,10}/gi;
       if (resPat.test(sanitized)) {
         findings.push({ infoType: "RESERVATION_CONFIRMATION_ID", displayName: "Reservation & Booking IDs", icon: "🎫" });
         sanitized = sanitized.replace(resPat, "[RESERVATION_ID_REDACTED]");
       }
     }
-    if (info_types.includes("SMART_WRISTBAND_UID") || info_types.includes("MAGICBAND_UID") || info_types.length === 0) {
-      const mbPat = /(?:WB|BAND|RFID|MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}/gi;
+    if (info_types.includes("SMART_WRISTBAND_UID") || info_types.length === 0) {
+      const mbPat = /(?:WB|BAND|RFID|SB|SMARTBAND)[-#\s]?[A-Fa-f0-9]{8,12}/gi;
       if (mbPat.test(sanitized)) {
         findings.push({ infoType: "SMART_WRISTBAND_UID", displayName: "Smart Wristband / RFID UID", icon: "📡" });
         sanitized = sanitized.replace(mbPat, "[WRISTBAND_UID_REDACTED]");
       }
     }
-    if (info_types.includes("ACCOUNT_SECURITY_PIN") || info_types.includes("DISNEY_PIN") || info_types.length === 0) {
+    if (info_types.includes("ACCOUNT_SECURITY_PIN") || info_types.includes("PIN_CODE") || info_types.length === 0) {
       const pinPat = /(?:pin|passcode|code|security pin)\s*(?:is|:)?\s*(\b\d{4,6}\b)/gi;
       if (pinPat.test(sanitized)) {
         findings.push({ infoType: "ACCOUNT_SECURITY_PIN", displayName: "Account & Room Security PINs", icon: "🔑" });

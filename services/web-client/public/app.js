@@ -302,7 +302,7 @@ function setupControls() {
     });
   }
 
-  // Cast Member Push to Talk
+  // Team Host Push to Talk
   setupMicButton(castMemberMicBtn, 'cast-member');
 
   // Guest Push to Talk
@@ -705,7 +705,7 @@ function updateSmartDetectUI() {
 function roleLabelFor(role, langKey) {
   if (role === 'cast-member') {
     const m = langMeta(langKey || getCastLang());
-    return `${m.flag} Cast Member (${m.label})`;
+    return `${m.flag} Team Host (${m.label})`;
   }
   if (role === 'guest') {
     const m = langMeta(langKey || getGuestLang());
@@ -718,12 +718,12 @@ function updateLanguageLabels() {
   const cast = langMeta(getCastLang());
   const guest = langMeta(getGuestLang());
 
-  // A guest language equal to the cast language makes no sense: disable it in the guest list
+  // A guest language equal to the host language makes no sense: disable it in the guest list
   Array.from(guestLangSelect.options).forEach(opt => {
     opt.disabled = opt.value === getCastLang();
   });
 
-  if (castSpeakerLabel) castSpeakerLabel.innerText = `Cast Member (${cast.label})`;
+  if (castSpeakerLabel) castSpeakerLabel.innerText = `Team Host (${cast.label})`;
   guestSpeakerLabel.innerText = smartDetectToggle.checked && !detectedGuestLang
     ? `Guest (auto-detect, starting ${guest.label})`
     : `Guest (${guest.label})`;
@@ -737,7 +737,7 @@ async function startContinuousStream() {
   const info = currentEngineInfo();
   if (info.pttOnly) {
     continuousStreamToggle.checked = false;
-    alert(`${info.label} supports push-to-talk only. Use the Cast Member / Guest buttons, or choose another engine for continuous mode.`);
+    alert(`${info.label} supports push-to-talk only. Use the Team Host / Guest buttons, or choose another engine for continuous mode.`);
     return;
   }
   if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -1347,7 +1347,7 @@ async function startRecording() {
       activeBtn.classList.add('recording');
       lastSpeechStartTimestamp = Date.now();
       const who = role === 'cast-member'
-        ? `Cast Member (${langMeta(getCastLang()).label})`
+        ? `Team Host (${langMeta(getCastLang()).label})`
         : (smartDetectToggle.checked ? 'Guest (auto-detect)' : `Guest (${langMeta(getGuestLang()).label})`);
       setLiveStatus(`Listening to ${who}...`, true);
       addMessageBubble(role, '🎤 Speaking...', turnId);
@@ -1758,18 +1758,18 @@ function escapeHtml(str) {
 
 async function setupGlossary() {
   const fallbackTerms = [
-    { term_id: "lightning_lane", en: "Lightning Lane", category: "Service", keep_original: true, translations: { es: "Lightning Lane", pt: "Lightning Lane", fr: "Lightning Lane", ja: "ライトニング・レーン", zh: "闪电通道 (Lightning Lane)" }, notes: "Express priority queue service. Do not translate literally." },
-    { term_id: "smart_band_plus", en: "Smart Band+", category: "Merchandise/Service", keep_original: true, translations: { es: "Smart Band+", pt: "Smart Band+", fr: "Smart Band+", ja: "スマートバンド+", zh: "智能手环+" }, notes: "Wearable RFID/Bluetooth park device." },
-    { term_id: "guest_ambassador", en: "Guest Ambassador", category: "Personnel", keep_original: false, translations: { es: "Embajador de Servicio", pt: "Embaixador de Atendimento", fr: "Ambassadeur de Service", ja: "サービスアンバサダー", zh: "服务大使" }, notes: "Theme park hospitality staff member." },
-    { term_id: "space_mountain", en: "Space Mountain", category: "Attraction", keep_original: true, translations: { es: "Space Mountain", pt: "Space Mountain", fr: "Space Mountain", ja: "スペース・マウンテン", zh: "飞越太空山" }, notes: "Futuristic indoor roller coaster." },
-    { term_id: "rise_of_the_resistance", en: "Star Wars: Rise of the Resistance", category: "Attraction", keep_original: true, translations: { es: "Star Wars: Rise of the Resistance", pt: "Star Wars: Rise of the Resistance", fr: "Star Wars: Rise of the Resistance", ja: "スター・ウォーズ：ライズ・オブ・ザ・レジスタンス", zh: "星球大战：抵抗组织崛起" }, notes: "Flagship trackless dark ride." },
-    { term_id: "haunted_mansion", en: "Haunted Mansion", category: "Attraction", keep_original: true, translations: { es: "Haunted Mansion (Mansión Embrujada)", pt: "Haunted Mansion (Mansão Assombrada)", fr: "Haunted Mansion / Phantom Manor", ja: "ホーンテッドマンション", zh: "幽灵公馆" }, notes: "Classic haunted dark ride attraction." },
-    { term_id: "rope_drop", en: "Rope Drop", category: "Park Concept", keep_original: false, translations: { es: "Apertura del parque / Entrada a primera hora", pt: "Abertura dos portões", fr: "Ouverture des portes du parc", ja: "開園（ロープドロップ）", zh: "开园时刻 (Rope Drop)" }, notes: "Arriving at park opening time." },
-    { term_id: "photopass", en: "PhotoPass", category: "Service", keep_original: true, translations: { es: "PhotoPass", pt: "PhotoPass", fr: "PhotoPass", ja: "フォトパス", zh: "乐拍通 (PhotoPass)" }, notes: "Professional in-park photography service." },
+    { term_id: "express_lane", en: "Express Lane", category: "Service", keep_original: true, translations: { es: "Express Lane", pt: "Express Lane", fr: "Express Lane", ja: "エクスプレス・レーン", zh: "快速通道 (Express Lane)" }, notes: "Express priority queue service. Do not translate literally." },
+    { term_id: "smartband_plus", en: "SmartBand+", category: "Merchandise/Service", keep_original: true, translations: { es: "SmartBand+", pt: "SmartBand+", fr: "SmartBand+", ja: "スマートバンド・プラス", zh: "智能手环+ (SmartBand+)" }, notes: "Wearable RFID/Bluetooth park device." },
+    { term_id: "team_host", en: "Team Host", category: "Personnel", keep_original: false, translations: { es: "Anfitrión del Equipo", pt: "Anfitrião da Equipe", fr: "Hôte de l'équipe", ja: "チームホスト", zh: "园区接待员 (Team Host)" }, notes: "Theme park hospitality staff host." },
+    { term_id: "galaxy_coaster", en: "Galaxy Coaster", category: "Attraction", keep_original: true, translations: { es: "Galaxy Coaster", pt: "Galaxy Coaster", fr: "Galaxy Coaster", ja: "ギャラクシー・コースター", zh: "星际过山车 (Galaxy Coaster)" }, notes: "Futuristic indoor roller coaster." },
+    { term_id: "hyperion_odyssey", en: "Hyperion Odyssey", category: "Attraction", keep_original: true, translations: { es: "Hyperion Odyssey", pt: "Hyperion Odyssey", fr: "Hyperion Odyssey", ja: "ハイペリオン・オデッセイ", zh: "海伯利安奥德赛 (Hyperion Odyssey)" }, notes: "Flagship trackless dark ride." },
+    { term_id: "phantom_manor", en: "Phantom Manor", category: "Attraction", keep_original: true, translations: { es: "Phantom Manor (Mansión Fantasma)", pt: "Phantom Manor (Mansão Fantasma)", fr: "Phantom Manor", ja: "ファントム・マナー", zh: "幻影庄园 (Phantom Manor)" }, notes: "Classic gothic dark ride attraction." },
+    { term_id: "rope_drop", en: "Rope Drop", category: "Park Concept", keep_original: false, translations: { es: "Apertura del parque", pt: "Abertura dos portões", fr: "Ouverture des portes du parc", ja: "開園（ロープドロップ）", zh: "开园时刻 (Rope Drop)" }, notes: "Arriving at park opening time." },
+    { term_id: "photocapture_plus", en: "PhotoCapture+", category: "Service", keep_original: true, translations: { es: "PhotoCapture+", pt: "PhotoCapture+", fr: "PhotoCapture+", ja: "フォトキャプチャー・プラス", zh: "园区旅拍+ (PhotoCapture+)" }, notes: "Professional in-park photography service." },
     { term_id: "rider_switch", en: "Rider Switch", category: "Service", keep_original: false, translations: { es: "Cambio de Acompañante (Rider Switch)", pt: "Troca de Passageiro", fr: "Service d'échange d'enfants", ja: "ライダー・スイッチ", zh: "乘客轮换 (Rider Switch)" }, notes: "Parent swap service for attractions." },
     { term_id: "single_rider", en: "Single Rider Line", category: "Queue Concept", keep_original: false, translations: { es: "Fila para Pasajero Solitario", pt: "Fila de Single Rider", fr: "File Single Rider (Passager seul)", ja: "シングルライダー", zh: "单人通道 (Single Rider)" }, notes: "Dedicated queue for solo riders." },
-    { term_id: "park_hopper", en: "Park Hopper", category: "Ticket", keep_original: true, translations: { es: "Boleto Park Hopper", pt: "Ingresso Park Hopper", fr: "Billet Park Hopper", ja: "パークホッパー", zh: "跨园门票 (Park Hopper)" }, notes: "Multi-park admission ticket." },
-    { term_id: "virtual_queue", en: "Virtual Queue", category: "Service", keep_original: false, translations: { es: "Fila Virtual", pt: "Fila Virtual", fr: "File d'attente virtuelle", ja: "スタンバイパス / バーチャルキュー", zh: "虚拟排队 (Virtual Queue)" }, notes: "In-app digital queue allocation system." }
+    { term_id: "multi_park_pass", en: "Multi-Park Pass", category: "Ticket", keep_original: true, translations: { es: "Pase Multi-Parque", pt: "Ingresso Multi-Parque", fr: "Pass Multi-Parcs", ja: "マルチパーク・パス", zh: "多园通票 (Multi-Park Pass)" }, notes: "Multi-park admission ticket." },
+    { term_id: "virtual_queue", en: "Virtual Queue", category: "Service", keep_original: false, translations: { es: "Fila Virtual", pt: "Fila Virtual", fr: "File d'attente virtuelle", ja: "バーチャルキュー", zh: "虚拟排队 (Virtual Queue)" }, notes: "In-app digital queue allocation system." }
   ];
 
   // UI Elements for Glossary Management
@@ -2604,7 +2604,7 @@ function renderUploadResults(result) {
           ${latencyHtml ? `<div class="turn-latency-row">${latencyHtml}</div>` : ''}
         `;
         card.querySelector('.upload-segment-role').innerText =
-          `${idx + 1}. ${seg.role === 'cast-member' ? 'Cast Member' : 'Guest'}${seg.dlp_applied ? ' • DLP redacted' : ''}${seg.glossary_applied ? ' • Glossary' : ''}`;
+          `${idx + 1}. ${seg.role === 'cast-member' ? 'Team Host' : 'Guest'}${seg.dlp_applied ? ' • DLP redacted' : ''}${seg.glossary_applied ? ' • Glossary' : ''}`;
         card.querySelector('.upload-segment-original').innerText = seg.sanitized_transcript || seg.transcript || '';
         card.querySelector('.upload-segment-translated').innerText = seg.translated_text || '';
 

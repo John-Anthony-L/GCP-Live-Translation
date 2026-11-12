@@ -2,57 +2,57 @@
   "version": "1.0",
   "name": "Enterprise Theme Park & Hospitality Live Translation Terminology & Brand Guide",
   "brand_rules": [
-    "Attraction and entertainment venue names must generally remain in their recognized official brand names (e.g. 'Space Mountain', 'Star Wars: Rise of the Resistance', 'Haunted Mansion') unless an official localized brand name exists.",
-    "Do NOT translate trademarked product and service names such as 'MagicBand+', 'Lightning Lane', 'Genie+', 'Memory Maker', 'PhotoPass', 'Smart Band+'.",
-    "Staff and host terminology must use respectful localized equivalents (e.g. Spanish: 'Embajador / Miembro del Personal', Portuguese: 'Membro da Equipe', French: 'Membre de l'équipe', Japanese: 'キャストメンバー / スタッフ').",
+    "Attraction and entertainment venue names must generally remain in their recognized official brand names (e.g. 'Galaxy Coaster', 'Hyperion Odyssey', 'Phantom Manor') unless an official localized brand name exists.",
+    "Do NOT translate trademarked product and service names such as 'SmartBand+', 'Express Lane', 'VIP Pass+', 'PhotoCapture+'.",
+    "Staff and host terminology must use respectful localized equivalents (e.g. Spanish: 'Anfitrión del Equipo / Miembro del Personal', Portuguese: 'Anfitrião da Equipe', French: 'Hôte de l'équipe', Japanese: 'チームホスト / スタッフ').",
     "Park and resort concepts like 'Rope Drop' should be translated contextually (e.g. Spanish: 'Apertura del parque / Entrada a primera hora').",
     "Maintain a welcoming, professional, and cheerful guest hospitality tone in all translations."
   ],
   "terms": [
     {
-      "term_id": "lightning_lane",
-      "en": "Lightning Lane",
+      "term_id": "express_lane",
+      "en": "Express Lane",
       "category": "Service",
       "keep_original": true,
-      "phonetic_en": "LAHYT-ning layn",
+      "phonetic_en": "ek-SPRES layn",
       "translations": {
-        "es": "Lightning Lane",
-        "pt": "Lightning Lane",
-        "fr": "Lightning Lane",
-        "ja": "ライトニング・レーン",
-        "zh": "闪电通道 (Lightning Lane)",
-        "de": "Lightning Lane"
+        "es": "Express Lane",
+        "pt": "Express Lane",
+        "fr": "Express Lane",
+        "ja": "エクスプレス・レーン",
+        "zh": "快速通道 (Express Lane)",
+        "de": "Express Lane"
       },
-      "notes": "Express queue service. Priority pass."
+      "notes": "Priority express queue service."
     },
     {
-      "term_id": "magicband_plus",
-      "en": "MagicBand+",
+      "term_id": "smartband_plus",
+      "en": "SmartBand+",
       "category": "Merchandise/Service",
       "keep_original": true,
-      "phonetic_en": "MAJ-ik band pluhs",
+      "phonetic_en": "SMART-band pluhs",
       "translations": {
-        "es": "MagicBand+",
-        "pt": "MagicBand+",
-        "fr": "MagicBand+",
-        "ja": "マジックバンド・プラス",
-        "zh": "魔力手环+ (MagicBand+)"
+        "es": "SmartBand+",
+        "pt": "SmartBand+",
+        "fr": "SmartBand+",
+        "ja": "スマートバンド・プラス",
+        "zh": "智能手环+ (SmartBand+)"
       },
       "notes": "Wearable RFID/Bluetooth park device."
     },
     {
-      "term_id": "cast_member",
-      "en": "Cast Member",
+      "term_id": "team_host",
+      "en": "Team Host",
       "category": "Personnel",
       "keep_original": false,
       "translations": {
-        "es": "Miembro del Elenco",
-        "pt": "Membro do Elenco",
-        "fr": "Cast Member / Membre de l'équipe",
-        "ja": "キャストメンバー",
-        "zh": "演职人员 (Cast Member)"
+        "es": "Anfitrión del Equipo",
+        "pt": "Anfitrião da Equipe",
+        "fr": "Hôte de l'équipe",
+        "ja": "チームホスト",
+        "zh": "园区接待员 (Team Host)"
       },
-      "notes": "Theme park / resort staff member."
+      "notes": "Theme park and resort staff host."
     },
     {
       "term_id": "guest",
@@ -91,120 +91,120 @@
         "es": "Fila Virtual",
         "pt": "Fila Virtual",
         "fr": "File d'attente virtuelle",
-        "ja": "スタンバイパス / バーチャルキュー",
+        "ja": "バーチャルキュー",
         "zh": "虚拟排队 (Virtual Queue)"
       },
       "notes": "In-app digital queuing system."
     },
     {
-      "term_id": "park_hopper",
-      "en": "Park Hopper",
+      "term_id": "multi_park_pass",
+      "en": "Multi-Park Pass",
       "category": "Ticket",
       "keep_original": true,
       "translations": {
-        "es": "Boleto Park Hopper (Pase entre parques)",
-        "pt": "Ingresso Park Hopper",
-        "fr": "Billet Park Hopper",
-        "ja": "パークホッパー",
-        "zh": "跨园门票 (Park Hopper)"
+        "es": "Pase Multi-Parque (Multi-Park Pass)",
+        "pt": "Ingresso Multi-Parque",
+        "fr": "Pass Multi-Parcs",
+        "ja": "マルチパーク・パス",
+        "zh": "多园通票 (Multi-Park Pass)"
       },
       "notes": "Multi-park admission pass."
     },
     {
-      "term_id": "space_mountain",
-      "en": "Space Mountain",
+      "term_id": "galaxy_coaster",
+      "en": "Galaxy Coaster",
       "category": "Attraction",
       "keep_original": true,
       "translations": {
-        "es": "Space Mountain",
-        "pt": "Space Mountain",
-        "fr": "Space Mountain",
-        "ja": "スペース・マウンテン",
-        "zh": "飞越太空山 (Space Mountain)"
+        "es": "Galaxy Coaster",
+        "pt": "Galaxy Coaster",
+        "fr": "Galaxy Coaster",
+        "ja": "ギャラクシー・コースター",
+        "zh": "星际过山车 (Galaxy Coaster)"
       },
-      "notes": "Tomorrowland indoor roller coaster."
+      "notes": "High-speed indoor space roller coaster."
     },
     {
-      "term_id": "rise_of_the_resistance",
-      "en": "Star Wars: Rise of the Resistance",
+      "term_id": "hyperion_odyssey",
+      "en": "Hyperion Odyssey",
       "category": "Attraction",
       "keep_original": true,
       "translations": {
-        "es": "Star Wars: Rise of the Resistance",
-        "pt": "Star Wars: Rise of the Resistance",
-        "fr": "Star Wars: Rise of the Resistance",
-        "ja": "スター・ウォーズ：ライズ・オブ・ザ・レジスタンス",
-        "zh": "星球大战：抵抗组织崛起"
+        "es": "Hyperion Odyssey",
+        "pt": "Hyperion Odyssey",
+        "fr": "Hyperion Odyssey",
+        "ja": "ハイペリオン・オデッセイ",
+        "zh": "海伯利安奥德赛 (Hyperion Odyssey)"
       },
-      "notes": "Galaxy's Edge trackless dark ride."
+      "notes": "Flagship trackless dark ride attraction."
     },
     {
-      "term_id": "haunted_mansion",
-      "en": "Haunted Mansion",
+      "term_id": "phantom_manor",
+      "en": "Phantom Manor",
       "category": "Attraction",
       "keep_original": true,
       "translations": {
-        "es": "Haunted Mansion (Mansión Embrujada)",
-        "pt": "Haunted Mansion (Mansão Assombrada)",
-        "fr": "Haunted Mansion / Phantom Manor",
-        "ja": "ホーンテッドマンション",
-        "zh": "幽灵公馆 (Haunted Mansion)"
+        "es": "Phantom Manor (Mansión Fantasma)",
+        "pt": "Phantom Manor (Mansão Fantasma)",
+        "fr": "Phantom Manor",
+        "ja": "ファントム・マナー",
+        "zh": "幻影庄园 (Phantom Manor)"
       },
-      "notes": "Liberty Square / New Orleans Square dark ride."
+      "notes": "Classic gothic dark ride attraction."
     },
     {
-      "term_id": "big_thunder_mountain",
-      "en": "Big Thunder Mountain Railroad",
+      "term_id": "canyon_mine_train",
+      "en": "Canyon Mine Train",
       "category": "Attraction",
       "keep_original": true,
       "translations": {
-        "es": "Big Thunder Mountain Railroad",
-        "pt": "Big Thunder Mountain Railroad",
-        "fr": "Big Thunder Mountain",
-        "ja": "ビッグサンダー・マウンテン",
-        "zh": "巨雷山 (Big Thunder Mountain)"
+        "es": "Canyon Mine Train",
+        "pt": "Canyon Mine Train",
+        "fr": "Canyon Mine Train",
+        "ja": "キャニオン・マイントレイン",
+        "zh": "峡谷矿山车 (Canyon Mine Train)"
       },
-      "notes": "Frontierland mine train coaster."
+      "notes": "Western canyon mine train roller coaster."
     },
     {
-      "term_id": "galaxys_edge",
-      "en": "Star Wars: Galaxy's Edge",
+      "term_id": "starlight_outpost",
+      "en": "Starlight Outpost",
       "category": "Land",
       "keep_original": true,
       "translations": {
-        "es": "Star Wars: Galaxy's Edge",
-        "pt": "Star Wars: Galaxy's Edge",
-        "fr": "Star Wars: Galaxy's Edge",
-        "ja": "スター・ウォーズ：ギャラクシーズ・エッジ",
-        "zh": "星球大战：银河边缘"
+        "es": "Starlight Outpost",
+        "pt": "Starlight Outpost",
+        "fr": "Starlight Outpost",
+        "ja": "スターライト・アウトポスト",
+        "zh": "星光前哨站 (Starlight Outpost)"
       },
-      "notes": "Themed land representing Black Spire Outpost on Batuu."
+      "notes": "Sci-fi themed land and spaceport district."
     },
     {
-      "term_id": "fantasyland",
-      "en": "Fantasyland",
+      "term_id": "enchanted_kingdom",
+      "en": "Enchanted Kingdom",
       "category": "Land",
       "keep_original": true,
       "translations": {
-        "es": "Fantasyland",
-        "pt": "Fantasyland",
-        "fr": "Fantasyland",
-        "ja": "ファンタジーランド",
-        "zh": "梦幻世界 (Fantasyland)"
+        "es": "Enchanted Kingdom",
+        "pt": "Enchanted Kingdom",
+        "fr": "Enchanted Kingdom",
+        "ja": "エンチャンテッド・キングダム",
+        "zh": "奇幻王国 (Enchanted Kingdom)"
       },
-      "notes": "Magic Kingdom themed area."
+      "notes": "Storybook castle and family attraction district."
     },
     {
-      "term_id": "photopass",
-      "en": "PhotoPass",
+      "term_id": "photocapture_plus",
+      "en": "PhotoCapture+",
       "category": "Service",
       "keep_original": true,
       "translations": {
-        "es": "PhotoPass",
-        "pt": "PhotoPass",
-        "fr": "PhotoPass",
-        "ja": "フォトパス",
-        "zh": "乐拍通 (PhotoPass)"
+        "es": "PhotoCapture+",
+        "pt": "PhotoCapture+",
+        "fr": "PhotoCapture+",
+        "ja": "フォトキャプチャー・プラス",
+        "zh": "园区旅拍+ (PhotoCapture+)"
       },
       "notes": "Professional park photography service."
     },
@@ -237,46 +237,46 @@
       "notes": "Line for single riders to fill empty seats."
     },
     {
-      "term_id": "world_showcase",
-      "en": "World Showcase",
+      "term_id": "global_pavilion",
+      "en": "Global Pavilion",
       "category": "Land",
       "keep_original": true,
       "translations": {
-        "es": "World Showcase",
-        "pt": "World Showcase",
-        "fr": "World Showcase",
-        "ja": "ワールド・ショーケース",
-        "zh": "世界之窗 (World Showcase)"
+        "es": "Global Pavilion",
+        "pt": "Global Pavilion",
+        "fr": "Global Pavilion",
+        "ja": "グローバル・パビリオン",
+        "zh": "环球展馆 (Global Pavilion)"
       },
-      "notes": "EPCOT international pavilion area."
+      "notes": "International cultural & dining showcase district."
     },
     {
-      "term_id": "tianas_bayou_adventure",
-      "en": "Tiana's Bayou Adventure",
+      "term_id": "emerald_river_rapids",
+      "en": "Emerald River Rapids",
       "category": "Attraction",
       "keep_original": true,
       "translations": {
-        "es": "Tiana's Bayou Adventure",
-        "pt": "Tiana's Bayou Adventure",
-        "fr": "Tiana's Bayou Adventure",
-        "ja": "ティアナのバイユー・アドベンチャー",
-        "zh": "蒂安娜的狂欢密境"
+        "es": "Emerald River Rapids",
+        "pt": "Emerald River Rapids",
+        "fr": "Emerald River Rapids",
+        "ja": "エメラルド・リバー・ラピッズ",
+        "zh": "翡翠激流 (Emerald River Rapids)"
       },
-      "notes": "Water log flume ride based on Princess and the Frog."
+      "notes": "Water log flume adventure attraction."
     },
     {
       "term_id": "character_meet_and_greet",
-      "en": "Character Meet and Greet",
+      "en": "VIP Character Greeting",
       "category": "Experience",
       "keep_original": false,
       "translations": {
-        "es": "Encuentro con Personajes",
-        "pt": "Encontro com Personagens",
-        "fr": "Rencontre avec les Personnages",
-        "ja": "キャラクターグリーティング",
-        "zh": "角色互动见面会"
+        "es": "Encuentro con Personajes VIP",
+        "pt": "Encontro com Personagens VIP",
+        "fr": "Rencontre avec les Personnages VIP",
+        "ja": "VIPキャラクター・グリーティング",
+        "zh": "VIP角色互动见面会"
       },
-      "notes": "Meeting themed characters."
+      "notes": "Meeting themed park characters."
     }
   ]
 }

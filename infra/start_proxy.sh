@@ -53,8 +53,8 @@ resolve_service() {
 }
 
 echo "🔍 Detecting deployed Cloud Run services..."
-SVC_WEB=$(resolve_service "${SERVICE_WEB:-live-web-client}" "disney-live-web-client")
-SVC_PIPELINE=$(resolve_service "${SERVICE_PIPELINE:-live-translation-pipeline}" "disney-translation-pipeline")
+SVC_WEB=$(resolve_service "${SERVICE_WEB:-live-web-client}" "enterprise-live-web-client")
+SVC_PIPELINE=$(resolve_service "${SERVICE_PIPELINE:-live-translation-pipeline}" "enterprise-translation-pipeline")
 
 echo "======================================================================"
 echo "🌐 Starting Secure Local Port-Forwarding to Cloud Run Services..."

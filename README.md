@@ -11,11 +11,12 @@ Powered by Google Cloud's enterprise stack. The default engine is a fully GA cas
 | Architecture Pillar | Enterprise Production Pipeline Specification |
 | :--- | :--- |
 | **Pipeline Nature** | **Modular Streaming Pipeline**: STT (Chirp 3) ➔ Cloud DLP ➔ MT v3 ➔ Chirp 3 HD TTS, or a Gemini Live speech-to-speech engine |
-| **Language Model** | **Cast language anchor**: the cast member's language is fixed; the guest's language is selected or auto-detected (Smart Guest Language Detection) |
+| **Language Model** | **Host language anchor**: the team host's language is fixed; the guest's language is selected or auto-detected (Smart Guest Language Detection) |
 | **Speech-to-Text (STT)**| **Cloud Speech-to-Text v2 Chirp 3 streaming (multi-region `us`)** with Speech Adaptation (brand phrases, boost 20) and `language_codes=["auto"]` detection |
 | **Data Protection & PII** | **Google Cloud Sensitive Data Protection (DLP)**: Real-time inline masking (PCI-DSS, Guest PII, Wristband UIDs, Security PINs) before translation and speech |
 | **Brand Glossary** | **Deterministic Cloud Glossary** (CSV dictionary) + Multi-Language Catalog (ES, PT, FR, JA, ZH) |
 | **Text-to-Speech (TTS)** | **Google Cloud Chirp 3 HD Voices** (e.g. `es-US-Chirp3-HD-Aoede` / `en-US-Chirp3-HD-Aoede`) |
+| **Persistent Storage** | **Google Cloud Storage (GCS)**: Saved conversation JSON records, summary index, and 24kHz WAV audio recordings (`gs://${PROJECT_ID}-conversations`) |
 | **Compliance & Readiness** | Default Chirp 3 cascade uses **GA APIs**; Gemini Live engines are preview models |
 | **Primary Use Case** | **In-Park Host ↔ Guest Countertops, Kiosks & Mobile Web** |
 
@@ -28,7 +29,7 @@ Powered by Google Cloud's enterprise stack. The default engine is a fully GA cas
 ```mermaid
 flowchart TD
     subgraph Client["Client Layer"]
-        Web["<b>Web Client (Browser / Mobile Web)</b><br/>• Mic Audio Streaming (16kHz PCM chunks)<br/>• Cast / Guest Language + Smart Detection<br/>• Gapless Audio Playback"]
+        Web["<b>Web Client (Browser / Mobile Web)</b><br/>• Mic Audio Streaming (16kHz PCM chunks)<br/>• Host / Guest Language + Smart Detection<br/>• Gapless Audio Playback"]
     end
 
     subgraph Pipeline["Enterprise Translation & Safety Pipeline (Cloud Run)"]
@@ -119,20 +120,22 @@ flowchart TD
 GCP-Live-Translation/
 ├── glossaries/
 │   ├── enterprise_parks_glossary.json  # Structured multi-language terms, phonetics & rules
-│   └── brand_glossary_en_es.csv        # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
+│   ├── brand_glossary_en_es.csv        # Cloud Translation API Advanced CSV glossary (EN ➔ ES)
+│   └── brand_glossary_es_en.csv        # Cloud Translation API Advanced CSV glossary (ES ➔ EN)
 ├── services/
 │   ├── translation-pipeline/           # Core Service: Production Pipeline (FastAPI)
 │   │   ├── main.py                     # FastAPI REST & WebSocket endpoints (/ws/stream-translate)
 │   │   ├── live_workers.py             # Live engines: Chirp 3 streaming, Gemini 3.5 Transcribe, 3.5 Live Translate, 3.8 Live
+│   │   ├── conversations_store.py      # GCS bucket persistence for saved conversation JSONs & 24kHz WAV recordings
 │   │   ├── languages.py                # Language catalog (STT / Translation / TTS / Gemini codes)
 │   │   ├── pipeline.py                 # Chirp 3 STT + Translation v3 + Chirp 3 HD TTS
 │   │   ├── glossary_helper.py          # GCS & Translation API Glossary manager
-│   │   ├── dlp_helper.py               # Cloud Sensitive Data Protection (DLP) manager
+│   │   ├── dlp_helper.py               # Cloud Sensitive Data Protection (DLP) & GCP Model Armor manager
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   └── web-client/                     # Core Service: Interactive Web & Mobile Simulator Testbed
 │       ├── public/                     # HTML5, CSS, audio streaming client & Telemetry Terminal
-│       ├── server.js                   # Node/Express API: glossary CRUD, saved conversations, upload proxy
+│       ├── server.js                   # Node/Express API: glossary CRUD, saved conversations proxy, upload proxy
 │       └── Dockerfile
 ├── infra/
 │   ├── deploy.sh                       # One-click Cloud Run multi-container deployment
@@ -159,11 +162,11 @@ PROJECT_ID="your-gcp-project-id" ./infra/deploy.sh
 ```
 
 The script will automatically:
-1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `run`, `storage`, `artifactregistry`, `cloudbuild`).
-2. Grant the Cloud Run runtime service account `roles/speech.client`, `roles/aiplatform.user`, `roles/cloudtranslate.user`, and `roles/dlp.user`.
-3. Create the Cloud Storage glossary bucket `gs://${PROJECT_ID}-glossaries`.
-4. Upload `brand_glossary_en_es.csv` and configure Translation API Advanced.
-5. Build and deploy **Translation Pipeline** (configured with Chirp 3 Speech V2, Gemini 3.5/3.8 Live, Cloud DLP, and Chirp 3 HD TTS) and **Web Client** containers to Cloud Run in `us-central1`.
+1. Enable all required GCP APIs (`aiplatform`, `translate`, `speech`, `texttospeech`, `dlp`, `modelarmor`, `run`, `storage`, `artifactregistry`, `cloudbuild`).
+2. Grant the Cloud Run runtime service account `roles/speech.client`, `roles/aiplatform.user`, `roles/cloudtranslate.user`, `roles/dlp.user`, `roles/modelarmor.user`, and `roles/storage.objectAdmin`.
+3. Create the Cloud Storage glossary bucket `gs://${PROJECT_ID}-glossaries` and saved conversations/audio bucket `gs://${PROJECT_ID}-conversations`.
+4. Upload `brand_glossary_en_es.csv` / `brand_glossary_es_en.csv` and configure Translation API Advanced.
+5. Build and deploy **Translation Pipeline** (configured with Chirp 3 Speech V2, Gemini 3.5/3.8 Live, GCP Model Armor, Cloud DLP, Chirp 3 HD TTS, and GCS conversation persistence) and **Web Client** containers to Cloud Run in `us-central1`.
 6. Output live Cloud Run service URLs.
 
 ---
@@ -174,19 +177,19 @@ The script will automatically:
 Open the deployed `live-web-client` Cloud Run URL (or `http://localhost:3000` when running locally) on desktop, tablet, or mobile browser:
 
 1. **Set the languages**:
-   - **Cast Language**: the language the cast member always speaks (the anchor). Every guest utterance is translated into it.
+   - **Host Language**: the language the team host always speaks (the anchor). Every guest utterance is translated into it.
    - **Guest Language**: the guest's language. With Smart Detection on, this is only the starting language.
-   - **Smart Guest Language Detection**: Chirp 3 (`language_codes=["auto"]`) or Gemini detects what the guest is speaking. A "Detected" badge appears, and from then on cast replies are translated into the detected language. The guest language only changes on utterances with 2+ words (or 2+ CJK characters), so short words like "OK" don't flip it.
+   - **Smart Guest Language Detection**: Chirp 3 (`language_codes=["auto"]`) or Gemini detects what the guest is speaking. A "Detected" badge appears, and from then on host replies are translated into the detected language. The guest language only changes on utterances with 2+ words (or 2+ CJK characters), so short words like "OK" don't flip it.
    - Supported: 🇺🇸 English, 🇲🇽 Spanish (LatAm/US), 🇪🇸 Spanish (Spain), 🇧🇷 Portuguese, 🇫🇷 French, 🇩🇪 German, 🇮🇹 Italian, 🇯🇵 Japanese, 🇰🇷 Korean, 🇨🇳 Mandarin.
 2. **Select a Translation Engine** (see the table below).
 3. **Select Mode & Speak**:
-   - **Cast Member / Guest Push-to-Talk**: hold a button while speaking; audio streams to the server as you talk.
-   - **Continuous 2-Way Stream**: hands-free mode. The engine's endpointing splits utterances; utterances in the cast language are treated as the cast member, anything else as the guest. Not available for Gemini 3.5 Live Translate.
+   - **Team Host / Guest Push-to-Talk**: hold a button while speaking; audio streams to the server as you talk.
+   - **Continuous 2-Way Stream**: hands-free mode across all 4 engines. The engine's endpointing splits utterances; utterances in the host language are treated as the team host, anything else as the guest.
 4. **Try Sample Phrases**:
-   - *"Excuse me, where is the Lightning Lane entrance for Space Mountain?"*
-   - *"Do I need a Virtual Queue for Star Wars: Rise of the Resistance?"*
-   - *"My reservation number is RES-982341 and my PIN is 4821."* (With the Chirp 3 or Gemini Transcribe engines, DLP masks the reservation ID and PIN before translation and speech synthesis.)
-5. **Recorded Upload tab**: upload a recorded conversation (WAV, MP3, M4A, ...). It is transcribed with Chirp 3 in 55-second windows, each utterance is routed with the same Cast / Guest routing, and you get a per-utterance transcript plus translated audio. Transcripts and audio can be downloaded and saved to **Past Conversations**.
+   - *"Excuse me, where is the Express Lane entrance for Galaxy Coaster?"*
+   - *"Do I need a Virtual Queue for Hyperion Odyssey?"*
+   - *"My reservation number is RES-982341 and my PIN is 4821."* (DLP masks the reservation ID and PIN before translation and speech synthesis.)
+5. **Recorded Upload tab**: upload a recorded conversation (WAV, MP3, M4A, ...). It is transcribed and translated per utterance using the selected engine (Chirp 3, Gemini 3.5 Transcribe, Gemini 3.5 Live Translate, or Gemini 3.8 Live) with Host / Guest routing, and you get a per-utterance transcript plus translated audio. Transcripts, JSON turn records, and 24kHz `.wav` audio recordings can be downloaded and saved to **Past Conversations** (persisted in `gs://${PROJECT_ID}-conversations`).
 
 ### Translation Engines
 
@@ -341,9 +344,9 @@ docker compose up --build
 ## Brand Glossary & Multi-Language Management
 
 The system preserves brand equity, attractions, and park terms using dual-layer enforcement across multiple target languages (**Spanish, Portuguese, French, Japanese, and Mandarin Chinese**):
-1. **Recognition Biasing**: Brand phrases are injected into Chirp 3 Speech Adaptation (boost 20) and Gemini 3.5 Transcribe custom vocabulary.
+1. **Recognition Biasing**: Brand phrases are injected into Chirp 3 Speech Adaptation (boost 20) and Gemini 3.5 Transcribe / Live Translate / 3.8 Live custom vocabulary (`brand_vocabulary`).
 2. **Cloud Translation API Advanced v3**: Deterministic CSV glossary mapping (Chirp 3 and Gemini 3.5 Transcribe engines).
-3. **Gemini 3.8 Live**: Glossary terms are included in the system prompt. Gemini 3.5 Live Translate does not accept instructions, so the glossary is not applied there.
+3. **Gemini 3.5 Live Translate & Gemini 3.8 Live**: Bidirectional (`<->`) glossary terms and DLP rules are injected directly into `system_instruction` alongside `custom_vocabulary`.
 
 ### Multi-Language View & Management via Web UI
 In the web interface at `http://localhost:3000`:
@@ -385,6 +388,7 @@ In the web interface at `http://localhost:3000`:
 | `CHIRP_REGION` | `us` | Multi-region endpoint for Speech-to-Text v2 **Chirp 3** (`us` or `eu`) |
 | `GLOSSARY_ID` | `brand-parks-glossary-en-es` | Cloud Translation API Advanced glossary resource ID |
 | `GLOSSARY_BUCKET` | `[PROJECT_ID]-glossaries` | Cloud Storage bucket storing CSV glossaries |
+| `CONVERSATIONS_BUCKET` | `[PROJECT_ID]-conversations` | Cloud Storage bucket storing saved conversation JSONs, `index.json`, and 24kHz `.wav` audio recordings |
 | `GEMINI_TRANSCRIBE_MODEL` | `gemini-3.5-transcribe-live-preview` | Model for the Gemini 3.5 Transcribe engine |
 | `GEMINI_TRANSCRIBE_LOCATION` | `global` | Endpoint location for Gemini 3.5 Transcribe (`global`) |
 | `GEMINI_LIVE_TRANSLATE_MODEL` | `gemini-3.5-live-translate-preview` | Model for the Gemini 3.5 Live Translate engine |
@@ -402,3 +406,4 @@ In the web interface at `http://localhost:3000`:
 ## Changelog
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full release history
+

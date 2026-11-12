@@ -48,7 +48,7 @@ DLP_INFO_TYPE_CATALOG = {
         "displayName": "Email Addresses",
         "category": "Contact Info",
         "icon": "📧",
-        "description": "Guest and Cast Member personal/work email addresses",
+        "description": "Guest and Team Host personal/work email addresses",
         "placeholder": "[EMAIL_REDACTED]",
         "defaultEnabled": True
     },
@@ -79,7 +79,7 @@ DLP_INFO_TYPE_CATALOG = {
         "placeholder": "[RESERVATION_ID_REDACTED]",
         "defaultEnabled": True,
         "isCustom": True,
-        "regex": r"(?:RES|RESV|BKG|CONF|BOOKING|WDW|DLR)[-#\s]?\d{5,10}"
+        "regex": r"(?:RES|RESV|BKG|CONF|BOOKING|PRK|RST)[-#\s]?\d{5,10}"
     },
     "SMART_WRISTBAND_UID": {
         "name": "SMART_WRISTBAND_UID",
@@ -90,7 +90,7 @@ DLP_INFO_TYPE_CATALOG = {
         "placeholder": "[WRISTBAND_UID_REDACTED]",
         "defaultEnabled": True,
         "isCustom": True,
-        "regex": r"(?:WB|BAND|RFID|MB|MAGICBAND)[-#\s]?[A-Fa-f0-9]{8,12}"
+        "regex": r"(?:WB|BAND|RFID|SB|SMARTBAND)[-#\s]?[A-Fa-f0-9]{8,12}"
     },
     "ACCOUNT_SECURITY_PIN": {
         "name": "ACCOUNT_SECURITY_PIN",
@@ -106,10 +106,8 @@ DLP_INFO_TYPE_CATALOG = {
 }
 
 # Compatibility aliases
-DLP_INFO_TYPE_CATALOG["DISNEY_RESERVATION_ID"] = DLP_INFO_TYPE_CATALOG["RESERVATION_CONFIRMATION_ID"]
-DLP_INFO_TYPE_CATALOG["MAGICBAND_UID"] = DLP_INFO_TYPE_CATALOG["SMART_WRISTBAND_UID"]
-DLP_INFO_TYPE_CATALOG["DISNEY_PIN"] = DLP_INFO_TYPE_CATALOG["ACCOUNT_SECURITY_PIN"]
 DLP_INFO_TYPE_CATALOG["RESERVATION_ID"] = DLP_INFO_TYPE_CATALOG["RESERVATION_CONFIRMATION_ID"]
+DLP_INFO_TYPE_CATALOG["WRISTBAND_UID"] = DLP_INFO_TYPE_CATALOG["SMART_WRISTBAND_UID"]
 DLP_INFO_TYPE_CATALOG["PIN_CODE"] = DLP_INFO_TYPE_CATALOG["ACCOUNT_SECURITY_PIN"]
 
 DEFAULT_STD_TYPES = {"CREDIT_CARD_NUMBER", "PHONE_NUMBER", "EMAIL_ADDRESS", "US_PASSPORT"}
@@ -557,5 +555,5 @@ class LiveTranslationDLPManager:
         }
 
 
-DisneyDLPManager = LiveTranslationDLPManager
+EnterpriseDLPManager = LiveTranslationDLPManager
 dlp_manager = LiveTranslationDLPManager()

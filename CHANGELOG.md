@@ -14,12 +14,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0] - 2026-11-12
+
+### Added
+- **Google Cloud Storage (GCS) Persistence for Saved Conversations & Audio Recordings (`conversations_store.py`)**:
+  - Added `GCSConversationsStore` (`services/translation-pipeline/conversations_store.py`) and REST endpoints (`GET /api/conversations`, `GET /api/conversations/{conv_id}`, `GET /api/conversations/{conv_id}/audio.wav`, `POST /api/conversations`, `DELETE /api/conversations/{conv_id}`) in `services/translation-pipeline/main.py`.
+  - Persists the conversation summary index (`conversations/index.json`), full dialogue turn & latency JSON records (`conversations/<id>.json`), and playable 24kHz LINEAR16 `.wav` audio recordings (`conversations/<id>.wav`) in `gs://${PROJECT_ID}-conversations` (`CONVERSATIONS_BUCKET`).
+  - Wired `services/web-client/server.js` `/api/conversations` routes (`GET`, `GET /:id`, `POST`, `DELETE /:id`) to proxy to `live-translation-pipeline` with Cloud Run IAM identity token authentication and automatic local fallback.
+  - Updated `infra/deploy.sh`, `.env.example`, and `docker-compose.yml` to automatically provision `gs://${PROJECT_ID}-conversations` and pass `CONVERSATIONS_BUCKET` to the pipeline container.
+
+### Changed
+- **Complete Repository & Brand Glossary Anonymization**:
+  - Replaced all trademarked attraction, product, and role names across `glossaries/enterprise_parks_glossary.json`, `glossaries/brand_glossary_en_es.csv`, `glossaries/brand_glossary_es_en.csv`, `services/translation-pipeline/`, `services/web-client/`, `infra/`, and documentation with anonymized enterprise hospitality terms (`Express Lane`, `SmartBand+`, `Team Host`, `Galaxy Coaster`, `Hyperion Odyssey`, `Phantom Manor`, `Canyon Mine Train`, `Starlight Outpost`, `Enchanted Kingdom`, `PhotoCapture+`, `Multi-Park Pass`, `Global Pavilion`, `Emerald River Rapids`, `VIP Character Greeting`).
+  - Updated user-facing UI labels and scenario chips in `services/web-client/public/index.html` and `services/web-client/public/app.js` to use **Team Host** / **Host Language** while preserving internal wire keys (`cast-member`, `castLang`) for 100% WebSocket and JSON backward compatibility.
+
+---
+
 ## [1.5.0] - 2026-11-11
 
 ### Added
 - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`) Bidirectional 2-Way Streaming & System Prompt Support**:
   - Verified and enabled `system_instruction` (bidirectional `<->` Enterprise Brand Glossary + DLP/Model Armor rules), dynamic `custom_vocabulary` ASR biasing (`brand_vocabulary`), and `speech_config` voice persona selection on `GeminiLiveTranslateWorker`.
-  - Added `GeminiLiveTranslateBidiWorker` for Continuous 2-Way hands-free conversations (`role="ambient"`), coordinating paired Cast $\rightarrow$ Guest and Guest $\rightarrow$ Cast sessions with `echo_target_language=False`, speaker-direction language filtering (`_ignore_input_lang`), automatic 0.85s silence turn finalization (`_idle_finalizer`), and automatic Cast $\rightarrow$ Guest hot-swap when Smart Guest Language Detection switches the guest language.
+  - Added `GeminiLiveTranslateBidiWorker` for Continuous 2-Way hands-free conversations (`role="ambient"`), coordinating paired Host $\rightarrow$ Guest and Guest $\rightarrow$ Host sessions with `echo_target_language=False`, speaker-direction language filtering (`_ignore_input_lang`), automatic 0.85s silence turn finalization (`_idle_finalizer`), and automatic Host $\rightarrow$ Guest hot-swap when Smart Guest Language Detection switches the guest language.
   - Added `translate_utterance_gemini35_live` to support **Gemini 3.5 Live Translate** on multi-turn Recorded Audio Uploads (`/api/translate-audio`).
   - Added `mtime`-aware `load_brand_glossary()` hot-reloading and automatic `gcloud auth print-access-token` local credential fallback (`get_gcp_credentials`).
 
@@ -44,14 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Chirp 3 (`chirp_3`)**: Cloud Speech-to-Text V2 (`us-speech.googleapis.com`) + Cloud DLP + Cloud Translation Advanced v3 + Chirp 3 HD TTS.
   - **Gemini 3.5 Transcribe (`gemini-3.5-transcribe`)**: Vertex AI `gemini-3.5-transcribe-live-preview` (`location="global"`) + Cloud DLP + Cloud Translation Advanced v3 + Chirp 3 HD TTS.
   - **Gemini 3.8 Live (`gemini-3.8-live`)**: Native speech-to-speech bidirectional audio via Vertex AI `gemini-3.8-live` (`location="us-central1"`).
-  - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate`)**: Native speech-to-speech push-to-talk translation via Vertex AI `gemini-3.5-live-translate-preview` (`location="global"`).
+  - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate`)**: Native speech-to-speech translation via Vertex AI `gemini-3.5-live-translate-preview` (`location="global"`).
 - **Dynamic DLP System Prompt Redaction for Gemini 3.8 Live (`dlp_prompt`)**:
-  - Dynamically injects active built-in and custom InfoTypes (`RESERVATION_ID`, `ANNUAL_PASS_ID`, `MAGICBAND_ID`, `ROOM_NUMBER`, `PIN_CODE`, `CREDIT_CARD_NUMBER`, etc.) into the Gemini 3.8 Live system prompt so sensitive numbers are never spoken aloud in generated audio (`dlp_scope: "prompt_and_transcript"`).
-  - Deterministic Cloud DLP (`redact_pii`) continues to scrub all input and output transcripts before UI rendering and Firestore persistence.
+  - Dynamically injects active built-in and custom InfoTypes (`RESERVATION_ID`, `ANNUAL_PASS_ID`, `SMARTBAND_ID`, `ROOM_NUMBER`, `PIN_CODE`, `CREDIT_CARD_NUMBER`, etc.) into the Gemini 3.8 Live system prompt so sensitive numbers are never spoken aloud in generated audio (`dlp_scope: "prompt_and_transcript"`).
+  - Deterministic Cloud DLP (`redact_pii`) continues to scrub all input and output transcripts before UI rendering and persistent storage.
 - **Hot-Swap Translation Engine & DLP Config During Continuous 2-Way Stream**:
-  - Changing the Translation Engine, Cast/Guest languages, Voice, or DLP InfoType settings while **Continuous 2-Way Stream** is active now hot-swaps the backend worker session on the fly without restarting the microphone.
+  - Changing the Translation Engine, Host/Guest languages, Voice, or DLP InfoType settings while **Continuous 2-Way Stream** is active now hot-swaps the backend worker session on the fly without restarting the microphone.
 - **Recorded Audio Upload Across Engines**:
-  - Supports **Chirp 3 (Speech V2)**, **Gemini 3.5 Live Transcribe**, and **Gemini 3.8 Live** for multi-turn uploaded audio files, with automatic protection against selecting Push-to-Talk-only (`gemini-3.5-live-translate`).
+  - Supports **Chirp 3 (Speech V2)**, **Gemini 3.5 Live Transcribe**, **Gemini 3.5 Live Translate**, and **Gemini 3.8 Live** for multi-turn uploaded audio files.
 - **Per-Turn Latency Breakdown & Interactive Synced Timeline Scrubber**:
   - Captures and stores per-turn `latencyMs` (`stt`, `dlp`, `mt`, `tts`, `total`, `engine`) across Live Streaming, Uploaded Audio, and Past Conversations.
   - Added an interactive audio player and timeline scrubber in **Past Conversations** with turn boundary markers, active turn highlighting, and click-to-seek turn playback.
@@ -78,12 +94,12 @@ For engineers familiar with commit `61955be`, all existing REST endpoints, WebSo
    - Streaming workers were modularized into `live_workers.py` and the language catalog into `languages.py`.
    - **Backward-compatible exports in `main.py` & `pipeline.py`**:
      - `StreamingSTTWorker` (alias of `Chirp3StreamWorker`), `GeminiLiveTranscribeWorker` (alias of `GeminiTranscribeWorker`), `create_stream_worker(...)`, and `resolve_locale(...)` are still exported directly from `main.py` and accept both the original keyword arguments (`websocket`, `src_lang`, `tgt_lang`, `speaker_role`, `stt_model`) and the new `SessionState` signature.
-     - `DisneyTranslationPipeline` (alias of `LiveTranslationPipeline`), `transcribe_audio(...)`, `get_streaming_config(...)`, and `run_full_pipeline(...)` are preserved in `pipeline.py`.
-     - Cloud Translation v3 automatically checks both `brand-parks-glossary-*` and legacy `disney-parks-glossary-*` IDs.
+     - `EnterpriseTranslationPipeline` (alias of `LiveTranslationPipeline`), `transcribe_audio(...)`, `get_streaming_config(...)`, and `run_full_pipeline(...)` are preserved in `pipeline.py`.
+     - Cloud Translation v3 automatically checks both `brand-parks-glossary-*` and `enterprise-parks-glossary-*` IDs.
 3. **Model & Endpoint Requirements**:
    - **Chirp 3 (`chirp_3`)**: Uses **Cloud Speech-to-Text V2** (`us-speech.googleapis.com`, recognizer `projects/{PROJECT_ID}/locations/us/recognizers/_`). Requires `roles/speech.client` on the Cloud Run service account (granted automatically by `infra/deploy.sh`). Note that Speech V2 only allows `adaptation` (`biasing_phrases`) when a single explicit locale is passed (e.g., `["en-US"]`), so `adaptation` is automatically omitted when `language_codes=["auto"]` (Smart Guest Language Detection) is active.
    - **Gemini 3.5 Live Transcribe (`gemini-3.5-transcribe-live-preview`)**: Hosted on Vertex AI in **`location="global"`** (`GEMINI_TRANSCRIBE_LOCATION=global`).
-   - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`)**: Hosted on Vertex AI in **`location="global"`** (`GEMINI_LIVE_TRANSLATE_LOCATION=global`), push-to-talk only.
+   - **Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`)**: Hosted on Vertex AI in **`location="global"`** (`GEMINI_LIVE_TRANSLATE_LOCATION=global`), supporting both push-to-talk and bidirectional 2-Way mode.
    - **Gemini 3.8 Live (`gemini-3.8-live`)**: Hosted on Vertex AI in **`location="us-central1"`** (`GEMINI_LIVE_LOCATION=us-central1`).
 
 ---

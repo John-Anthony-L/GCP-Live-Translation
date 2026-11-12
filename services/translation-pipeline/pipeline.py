@@ -99,12 +99,11 @@ class LiveTranslationPipeline:
         self.chirp2_es_recognizer = self.chirp3_es_recognizer
         
         self.brand_phrases = [
-            "Lightning Lane", "MagicBand+", "Cast Member", "Space Mountain",
-            "Rise of the Resistance", "Haunted Mansion", "Big Thunder Mountain",
-            "Galaxy's Edge", "Fantasyland", "PhotoPass", "Rider Switch",
-            "Single Rider", "Tiana's Bayou Adventure", "Rope Drop", "Park Hopper", "Express Pass"
+            "Express Lane", "SmartBand+", "Team Host", "Galaxy Coaster",
+            "Hyperion Odyssey", "Phantom Manor", "Canyon Mine Train",
+            "Starlight Outpost", "Enchanted Kingdom", "PhotoCapture+", "Rider Switch",
+            "Single Rider", "Emerald River Rapids", "Rope Drop", "Multi-Park Pass", "Global Pavilion"
         ]
-        self.disney_phrases = self.brand_phrases
         self.cached_speech_context = speech.SpeechContext(
             phrases=self.brand_phrases,
             boost=20.0
@@ -519,4 +518,4 @@ class LiveTranslationPipeline:
             "glossary_applied": mt_result["glossary_applied"]
         }
 
-DisneyTranslationPipeline = LiveTranslationPipeline
+EnterpriseTranslationPipeline = LiveTranslationPipeline

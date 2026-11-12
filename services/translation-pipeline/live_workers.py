@@ -4,12 +4,12 @@ Engines
 -------
 - chirp_3                    Chirp 3 StreamingRecognize (Speech V2) -> DLP -> Translation v3 -> Chirp 3 HD TTS
 - gemini-3.5-transcribe      Gemini 3.5 Transcribe Live            -> DLP -> Translation v3 -> Chirp 3 HD TTS
-- gemini-3.5-live-translate  Gemini 3.5 Live Translate (speech-to-speech, push-to-talk only)
+- gemini-3.5-live-translate  Gemini 3.5 Live Translate (speech-to-speech, push-to-talk & 2-way bidirectional)
 - gemini-3.8-live            Gemini 3.8 Live with a strict interpreter system prompt (speech-to-speech)
 
-Cast Member Language anchor
----------------------------
-The cast member's language is fixed. Guest speech is translated into the cast language; cast
+Team Host Language anchor
+-------------------------
+The team host's language is fixed. Guest speech is translated into the host language; host
 speech is translated into the current guest language. With Smart Guest Language Detection on,
 guest turns are transcribed in language-agnostic mode (Chirp 3 language_codes=["auto"], Gemini
 auto-detect) and the detected language becomes the new guest language.
@@ -156,7 +156,7 @@ def apply_guest_detection(state: SessionState, detected: Optional[str], transcri
 
 
 def route_turn(state: SessionState, role: str, detected: Optional[str]):
-    """Resolve (effective_role, source_lang_key, target_lang_key) with the cast member language as anchor."""
+    """Resolve (effective_role, source_lang_key, target_lang_key) with the team host language as anchor."""
     cast = state.cast_lang
     det = resolve_language(detected) if detected else None
     if role == "cast-member":
@@ -164,7 +164,7 @@ def route_turn(state: SessionState, role: str, detected: Optional[str]):
     if role == "guest":
         src = det if (state.smart_detect and det) else state.guest_lang
         return "guest", src, cast
-    # ambient / continuous: whoever is not speaking the cast language is the guest
+    # ambient / continuous: whoever is not speaking the host language is the guest
     if det and same_language(det, cast):
         return "cast-member", cast, state.guest_lang
     return "guest", (det or state.guest_lang), cast
@@ -1533,7 +1533,7 @@ class GeminiLiveTranslateBidiWorker(BaseStreamWorker):
     """Bidirectional Continuous 2-Way Worker for Gemini 3.5 Live Translate (`role == "ambient"`).
 
     Coordinates two paired `GeminiLiveTranslateWorker` legs with `echo_target_language=False`:
-      - `cast_leg` (`role="cast-member"`): translates Cast Member speech (`cast_lang`) -> `guest_lang`
+      - `cast_leg` (`role="cast-member"`): translates Team Host speech (`cast_lang`) -> `guest_lang`
       - `guest_leg` (`role="guest"`): translates Guest speech (any 70+ language) -> `cast_lang`
     When Smart Guest Language Detection updates `state.guest_lang`, `cast_leg` automatically
     hot-reconnects with the new `target_language_code`.

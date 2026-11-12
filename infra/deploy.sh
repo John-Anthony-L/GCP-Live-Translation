@@ -41,7 +41,8 @@ if [ -z "${PROJECT_ID}" ] || [ "${PROJECT_ID}" = "your-gcp-project-id" ]; then
 fi
 
 REGION="${REGION:-${LOCATION:-us-central1}}"
-BUCKET_NAME="${PROJECT_ID}-glossaries"
+BUCKET_NAME="${GLOSSARY_BUCKET:-${PROJECT_ID}-glossaries}"
+CONVERSATIONS_BUCKET="${CONVERSATIONS_BUCKET:-${PROJECT_ID}-conversations}"
 
 CSV_FILE="brand_glossary_en_es.csv"
 
@@ -152,15 +153,19 @@ if [ -n "${ACCESS_TOKEN}" ]; then
         "https://modelarmor.${REGION}.rep.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/templates?template_id=live-translation-armor-coppa" > /dev/null 2>&1 || true
 fi
 
-# 3. Create GCS Glossary Bucket & Upload Brand Glossary
+# 3. Create GCS Glossary & Conversations Buckets & Upload Brand Glossary
 echo ""
-echo "📦 Step 2: Creating GCS Glossary Bucket and Uploading Glossary..."
+echo "📦 Step 2: Creating GCS Glossary & Conversations Buckets..."
 if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" > /dev/null 2>&1; then
     gcloud storage buckets create "gs://${BUCKET_NAME}" --project="${PROJECT_ID}" --location="${REGION}"
+fi
+if ! gcloud storage buckets describe "gs://${CONVERSATIONS_BUCKET}" > /dev/null 2>&1; then
+    gcloud storage buckets create "gs://${CONVERSATIONS_BUCKET}" --project="${PROJECT_ID}" --location="${REGION}"
 fi
 
 gcloud storage cp "glossaries/${CSV_FILE}" "gs://${BUCKET_NAME}/${CSV_FILE}"
 echo "✅ Glossary uploaded to gs://${BUCKET_NAME}/${CSV_FILE}"
+echo "✅ Conversations & Audio bucket ready at gs://${CONVERSATIONS_BUCKET}"
 
 # 4. Deploy Service 1: Translation Pipeline (Python FastAPI: Chirp 3 V2 + Gemini 3.5/3.8 Live + GCP Model Armor & Cloud DLP + MT v3 + Chirp 3 HD TTS)
 echo ""
@@ -172,7 +177,7 @@ gcloud run deploy live-translation-pipeline \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=${CHIRP_REGION:-us},GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME},GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview},GEMINI_TRANSCRIBE_BATCH_MODEL=${GEMINI_TRANSCRIBE_BATCH_MODEL:-gemini-3.5-transcribe-preview},GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global},GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview},GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global},GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-${REGION}},USE_MODEL_ARMOR=${USE_MODEL_ARMOR:-true},MODEL_ARMOR_LOCATION=${MODEL_ARMOR_LOCATION:-${REGION}},MODEL_ARMOR_TEMPLATE_ID=${MODEL_ARMOR_TEMPLATE_ID:-live-translation-armor},MODEL_ARMOR_COPPA_TEMPLATE_ID=${MODEL_ARMOR_COPPA_TEMPLATE_ID:-live-translation-armor-coppa}" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},CHIRP_REGION=${CHIRP_REGION:-us},GLOSSARY_ID=brand-parks-glossary-en-es,GLOSSARY_BUCKET=${BUCKET_NAME},CONVERSATIONS_BUCKET=${CONVERSATIONS_BUCKET},GEMINI_TRANSCRIBE_MODEL=${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe-live-preview},GEMINI_TRANSCRIBE_BATCH_MODEL=${GEMINI_TRANSCRIBE_BATCH_MODEL:-gemini-3.5-transcribe-preview},GEMINI_TRANSCRIBE_LOCATION=${GEMINI_TRANSCRIBE_LOCATION:-global},GEMINI_LIVE_TRANSLATE_MODEL=${GEMINI_LIVE_TRANSLATE_MODEL:-gemini-3.5-live-translate-preview},GEMINI_LIVE_TRANSLATE_LOCATION=${GEMINI_LIVE_TRANSLATE_LOCATION:-global},GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-${REGION}},USE_MODEL_ARMOR=${USE_MODEL_ARMOR:-true},MODEL_ARMOR_LOCATION=${MODEL_ARMOR_LOCATION:-${REGION}},MODEL_ARMOR_TEMPLATE_ID=${MODEL_ARMOR_TEMPLATE_ID:-live-translation-armor},MODEL_ARMOR_COPPA_TEMPLATE_ID=${MODEL_ARMOR_COPPA_TEMPLATE_ID:-live-translation-armor-coppa}" \
     --timeout 3600 \
     --cpu 2 \
     --memory 2Gi
@@ -201,7 +206,7 @@ gcloud run deploy live-web-client \
     --platform managed \
     --allow-unauthenticated \
     --quiet \
-    --set-env-vars "TRANSLATION_PIPELINE_URL=${PIPELINE_URL},TRANSLATION_PIPELINE_WS_URL=${WS_PIPELINE_URL}" \
+    --set-env-vars "TRANSLATION_PIPELINE_URL=${PIPELINE_URL},TRANSLATION_PIPELINE_WS_URL=${WS_PIPELINE_URL},CONVERSATIONS_BUCKET=${CONVERSATIONS_BUCKET}" \
     --cpu 1 \
     --memory 1Gi
 

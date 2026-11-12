@@ -2,12 +2,14 @@ import os
 import base64
 import asyncio
 from array import array
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
 from glossary_helper import create_or_update_gcs_glossary, create_translation_api_glossary
 from dlp_helper import dlp_manager, DLP_INFO_TYPE_CATALOG
+from conversations_store import conversations_store
 from languages import lang_info, resolve_language, same_language, public_catalog
 from live_workers import (
     pipeline,
@@ -75,7 +77,7 @@ class TextTranslateRequest(BaseModel):
 
 class AudioTranslateRequest(BaseModel):
     audio_base64: str
-    # Cast member language anchor (preferred)
+    # Team host language anchor (preferred)
     cast_lang: Optional[str] = None
     guest_lang: Optional[str] = None
     smart_detect: bool = True
@@ -257,11 +259,12 @@ def _split_pcm_utterances(pcm: bytes, max_window_s: int = 35) -> List[bytes]:
 
 @app.post("/api/translate-audio")
 async def translate_audio(req: AudioTranslateRequest):
-    """Translate a recorded conversation with the cast member language as anchor.
+    """Translate a recorded conversation with the team host language as anchor.
 
-    Supports three engines:
+    Supports all four engines:
       - `chirp_3`: Speech-to-Text V2 (`chirp_3`) -> Cloud DLP -> Translation v3 -> Chirp 3 HD TTS
-      - `gemini-3.5-transcribe`: `gemini-3.5-transcribe-preview` (`global`) -> Cloud DLP -> Translation v3 -> Chirp 3 HD TTS
+      - `gemini-3.5-transcribe`: `gemini-3.5-transcribe-live-preview` (`global`) -> Cloud DLP -> Translation v3 -> Chirp 3 HD TTS
+      - `gemini-3.5-live-translate`: `gemini-3.5-live-translate-preview` (`global`) speech-to-speech + Cloud DLP on transcripts
       - `gemini-3.8-live`: `gemini-3.8-live` speech-to-speech interpreter (`us-central1`) + Cloud DLP on transcripts
     """
     pcm_bytes = base64.b64decode(req.audio_base64)
@@ -425,7 +428,7 @@ async def translate_audio(req: AudioTranslateRequest):
             share = len(s.get("transcript", "")) / total_chars if len(segs) > 1 else 1.0
             raw_segments.append({**s, "stt_ms": round(win_stt_ms * share, 1)})
 
-    # 2. Route each utterance with the cast member anchor; merge consecutive same-direction utterances
+    # 2. Route each utterance with the team host anchor; merge consecutive same-direction utterances
     merged: List[Dict[str, Any]] = []
     for seg in raw_segments:
         detected = seg.get("language_code")
@@ -639,6 +642,43 @@ def sync_glossary(csv_path: Optional[str] = None):
         "gcs_uri": gcs_uri,
         "glossary_name": result.name if hasattr(result, "name") else str(result)
     }
+
+
+@app.get("/api/conversations")
+def list_conversations_endpoint():
+    return conversations_store.list_conversations()
+
+
+@app.get("/api/conversations/{conv_id}")
+def get_conversation_endpoint(conv_id: str):
+    record = conversations_store.get_conversation(conv_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return record
+
+
+@app.get("/api/conversations/{conv_id}/audio.wav")
+def get_conversation_audio_endpoint(conv_id: str):
+    wav_bytes = conversations_store.get_conversation_wav(conv_id)
+    if not wav_bytes:
+        raise HTTPException(status_code=404, detail="Conversation audio not found")
+    return Response(content=wav_bytes, media_type="audio/wav")
+
+
+@app.post("/api/conversations")
+def save_conversation_endpoint(payload: Dict[str, Any]):
+    if not payload or not isinstance(payload.get("turns"), list):
+        raise HTTPException(status_code=400, detail="Invalid conversation payload: turns array required.")
+    record = conversations_store.save_conversation(payload)
+    return {"success": True, "conversation": record}
+
+
+@app.delete("/api/conversations/{conv_id}")
+def delete_conversation_endpoint(conv_id: str):
+    deleted = conversations_store.delete_conversation(conv_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"success": True, "message": "Conversation deleted from GCS."}
 
 
 @app.websocket("/ws/stream-translate")

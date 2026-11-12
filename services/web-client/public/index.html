@@ -68,7 +68,7 @@
         <!-- Controls Bar -->
         <div class="controls-card">
           <div class="control-group">
-            <label for="castLangSelect">Cast Language</label>
+            <label for="castLangSelect">Host Language</label>
             <select id="castLangSelect" class="custom-select lang-select" data-default="en"></select>
           </div>
 
@@ -198,7 +198,7 @@
             <div class="chat-welcome">
               <span class="sparkle-icon">🌐</span>
               <p>Welcome to <strong>2-Way Live Translation</strong>.</p>
-              <p class="sub-hint">Hold <strong>Cast Member</strong> to speak in the cast language, or hold <strong>Guest</strong> to let the guest speak. With Smart Guest Language Detection on, the guest's language is detected automatically and every cast reply is translated into it.</p>
+              <p class="sub-hint">Hold <strong>Team Host</strong> to speak in the host language, or hold <strong>Guest</strong> to let the guest speak. With Smart Guest Language Detection on, the guest's language is detected automatically and every host reply is translated into it.</p>
             </div>
           </div>
         </div>
@@ -207,11 +207,11 @@
         <div class="quick-scenarios-card">
           <span class="scenarios-title">🎯 Quick Translation & PII Scenarios (Click to Run):</span>
           <div class="scenarios-buttons">
-            <button class="scenario-chip" data-lang="en" data-text="Where is the Lightning Lane entrance for Space Mountain in Tomorrowland?">
-              🇺🇸 Space Mountain & Lightning Lane
+            <button class="scenario-chip" data-lang="en" data-text="Where is the Express Lane entrance for Galaxy Coaster in Starlight Outpost?">
+              🇺🇸 Galaxy Coaster & Express Lane
             </button>
-            <button class="scenario-chip" data-lang="es" data-text="¿A qué hora es el Rope Drop para Star Wars: Rise of the Resistance?">
-              🇪🇸 Rope Drop & Rise of the Resistance
+            <button class="scenario-chip" data-lang="es" data-text="¿A qué hora es el Rope Drop para Hyperion Odyssey?">
+              🇪🇸 Rope Drop & Hyperion Odyssey
             </button>
             <button class="scenario-chip scenario-pii" data-lang="en" data-text="Hi, my reservation confirmation is RES-982341 and my credit card is 4532 8912 3456 7890.">
               💳 PII Test: Credit Card & Reservation ID
@@ -226,8 +226,8 @@
         <div class="action-bar-2way">
           <!-- Team Host (English) Speak Button -->
           <div class="speaker-col">
-            <span class="speaker-label cast-member-label" id="castSpeakerLabel">Cast Member (English)</span>
-            <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to speak as the Cast Member">
+            <span class="speaker-label cast-member-label" id="castSpeakerLabel">Team Host (English)</span>
+            <button id="castMemberMicBtn" class="mic-button cast-member-btn" title="Hold to speak as the Team Host">
               <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
                 <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
@@ -263,7 +263,7 @@
 
         <!-- Optional Text Input fallback for testing without mic -->
         <div class="text-fallback-bar">
-          <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'My reservation is WDW-89214 and card is 4111 2222 3333 4444')">
+          <input type="text" id="textInput" placeholder="Or type a test phrase here (e.g. 'My reservation is RES-89214 and card is 4111 2222 3333 4444')">
           <button id="sendTextBtn" class="send-btn">Send & Speak</button>
         </div>
 
@@ -672,7 +672,7 @@
           <div class="panel-header">
             <div>
               <h2>📁 Upload Recorded Conversation</h2>
-              <p>Upload a recorded conversation (WAV, MP3, M4A, OGG, WebM). Choose Chirp 3, Gemini 3.5 Transcribe, Gemini 3.5 Live Translate, or Gemini 3.8 Live: each utterance is transcribed and language-detected with the cast language as anchor.</p>
+              <p>Upload a recorded conversation (WAV, MP3, M4A, OGG, WebM). Choose Chirp 3, Gemini 3.5 Transcribe, Gemini 3.5 Live Translate, or Gemini 3.8 Live: each utterance is transcribed and language-detected with the host language as anchor.</p>
             </div>
             <div class="upload-badge">
               <span id="uploadEngineBadge">Cloud Chirp 3 + DLP + MT v3</span>
@@ -692,7 +692,7 @@
             </div>
 
             <div class="control-group">
-              <label for="uploadCastLang">Cast Language</label>
+              <label for="uploadCastLang">Host Language</label>
               <select id="uploadCastLang" class="custom-select lang-select" data-default="en"></select>
             </div>
 
@@ -900,6 +900,6 @@
     </footer>
   </div>
 
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

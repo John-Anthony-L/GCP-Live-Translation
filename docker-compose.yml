@@ -20,6 +20,7 @@ services:
       - GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1}
       - GLOSSARY_ID=${GLOSSARY_ID:-brand-parks-glossary-en-es}
       - GLOSSARY_BUCKET=${GLOSSARY_BUCKET:-your-gcp-project-id-glossaries}
+      - CONVERSATIONS_BUCKET=${CONVERSATIONS_BUCKET:-your-gcp-project-id-conversations}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
     volumes:
       - ~/.config/gcloud/application_default_credentials.json:/app/service-account.json:ro
